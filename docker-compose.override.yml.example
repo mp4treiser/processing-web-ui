@@ -1,0 +1,19 @@
+# Скопируйте этот файл в docker-compose.override.yml для локальной разработки
+# docker-compose автоматически подхватит этот файл
+
+version: '3.8'
+
+services:
+  backend:
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgresql://deal_user:deal_password@postgres:5432/deal_processing
+
+  frontend:
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000
+

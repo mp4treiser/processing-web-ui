@@ -1,0 +1,48 @@
+export interface User {
+  id: number;
+  email: string;
+  full_name: string | null;
+  role: 'manager' | 'accountant' | 'director';
+  is_active: string;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+}
+
+export const authService = {
+  login: async (email: string, password: string): Promise<LoginResponse> => {
+    const formData = new FormData();
+    formData.append('username', email);
+    formData.append('password', password);
+    
+    const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/auth/login`, {
+      method: 'POST',
+      body: formData,
+    });
+    
+    if (!response.ok) {
+      throw new Error('Invalid credentials');
+    }
+    
+    return response.json();
+  },
+  
+  getCurrentUser: async (): Promise<User> => {
+    try {
+      const { api } = await import('./api');
+      const response = await api.get('/api/auth/me');
+      return response.data;
+    } catch (error) {
+      console.error('Error in getCurrentUser:', error);
+      throw error;
+    }
+  },
+  
+  logout: () => {
+    localStorage.removeItem('token');
+    window.location.href = '/login';
+  },
+};
+
