@@ -58,14 +58,14 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - VITE_API_URL=http://localhost:8000
+        - VITE_API_URL=http://94.141.160.249:8000
     container_name: deal_processing_frontend
     ports:
       - "3000:80"
     depends_on:
       - backend
     environment:
-      - VITE_API_URL=http://localhost:8000
+      - VITE_API_URL=http://94.141.160.249:8000
     volumes:
       - ./frontend:/app
       - /app/node_modules

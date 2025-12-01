@@ -3,6 +3,11 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Принимаем API URL как build-аргумент и пробрасываем в окружение,
+# чтобы Vite подставил его в import.meta.env.VITE_API_URL во время сборки
+ARG VITE_API_URL
+ENV VITE_API_URL=${VITE_API_URL}
+
 # Копирование package файлов
 COPY package*.json ./
 

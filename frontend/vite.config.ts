@@ -8,7 +8,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        // Для dev-режима берём API URL из env (например, через docker-compose),
+        // а если не задано – используем localhost как запасной вариант.
+        target: process.env.VITE_API_URL || 'http://localhost:8000',
         changeOrigin: true,
       },
     },

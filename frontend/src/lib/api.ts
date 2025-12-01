@@ -1,5 +1,7 @@
 import axios from 'axios';
 
+// В проде URL приходит из VITE_API_URL, который задаётся в docker-compose (build-arg + env).
+// Фолбек на localhost оставим только как удобство для локальной разработки без docker.
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export const api = axios.create({
