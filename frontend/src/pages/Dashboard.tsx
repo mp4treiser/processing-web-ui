@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../lib/api';
+import { useState } from 'react';
 
 interface Deal {
   id: number;
@@ -28,10 +29,22 @@ const statusColors: Record<string, string> = {
 export function Dashboard() {
   const { user } = useAuth();
 
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<'date' | 'amount'>('date');
+  const [sortDirection, setSortDirection] = useState<'desc' | 'asc'>('desc');
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
+
   const { data: deals, isLoading } = useQuery<Deal[]>({
     queryKey: ['deals'],
     queryFn: async () => {
-      const response = await api.get('/api/deals');
+      // Бэкенд уже сортирует по дате (последние сверху) и ограничивает выборку.
+      const response = await api.get('/api/deals', {
+        params: {
+          limit: 100,
+          offset: 0,
+        },
+      });
       return response.data;
     },
   });
@@ -39,6 +52,41 @@ export function Dashboard() {
   if (isLoading) {
     return <div className="text-center py-8">Loading...</div>;
   }
+
+  const filteredDeals = (deals || [])
+    .filter((deal) => {
+      if (statusFilter !== 'all') {
+        if (user?.role === 'manager') {
+          // Для менеджера оставляем текущую логику статусов (упрощённо)
+          return true;
+        }
+        return deal.status === statusFilter;
+      }
+      return true;
+    })
+    .filter((deal) => {
+      if (!dateFrom && !dateTo) return true;
+      const created = new Date(deal.created_at).getTime();
+      if (dateFrom) {
+        const from = new Date(dateFrom).getTime();
+        if (created < from) return false;
+      }
+      if (dateTo) {
+        const to = new Date(dateTo).getTime() + 24 * 60 * 60 * 1000 - 1;
+        if (created > to) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'date') {
+        const da = new Date(a.created_at).getTime();
+        const db = new Date(b.created_at).getTime();
+        return sortDirection === 'desc' ? db - da : da - db;
+      }
+      const aa = parseFloat(a.total_eur_request);
+      const ab = parseFloat(b.total_eur_request);
+      return sortDirection === 'desc' ? ab - aa : aa - ab;
+    });
 
   return (
     <div className="px-4 py-6">
@@ -58,9 +106,75 @@ export function Dashboard() {
         </div>
       )}
 
+      {user && (user.role === 'accountant' || user.role === 'director') && (
+        <div className="mb-4 bg-white shadow rounded-md p-4">
+          <h2 className="text-md font-semibold mb-3">Filters</h2>
+          <div className="flex flex-wrap gap-3 items-end">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Status</label>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+              >
+                <option value="all">All</option>
+                <option value="new">New</option>
+                <option value="calculation_pending">Calculation pending</option>
+                <option value="director_approval_pending">Director approval</option>
+                <option value="director_rejected">Director rejected</option>
+                <option value="client_approval">Client approval</option>
+                <option value="awaiting_payment">Awaiting payment</option>
+                <option value="execution">Execution</option>
+                <option value="completed">Completed</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Date from</label>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Date to</label>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Sort</label>
+              <div className="flex space-x-2">
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as 'date' | 'amount')}
+                  className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+                >
+                  <option value="date">By date</option>
+                  <option value="amount">By amount</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSortDirection((prev) => (prev === 'desc' ? 'asc' : 'desc'))
+                  }
+                  className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+                >
+                  {sortDirection === 'desc' ? '↓' : '↑'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="bg-white shadow overflow-hidden sm:rounded-md">
         <ul className="divide-y divide-gray-200">
-          {deals?.map((deal) => (
+          {filteredDeals.map((deal) => (
             <li key={deal.id}>
               <Link
                 to={`/deals/${deal.id}`}

@@ -26,7 +26,8 @@ export function Layout({ children }: LayoutProps) {
     if (user.role === 'accountant') {
       return [
         ...baseLinks,
-        { path: '/accountant', label: 'Calculation Queue', roles: ['accountant'] },
+      { path: '/accountant', label: 'Calculation Queue', roles: ['accountant'] },
+      { path: '/accountant/dashboard', label: 'Financial Dashboard', roles: ['accountant'] },
       ];
     }
 

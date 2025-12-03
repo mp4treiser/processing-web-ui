@@ -14,6 +14,7 @@ interface Deal {
   partner_share_usdt: string | null;
   effective_rate: string | null;
   status: string;
+  created_at: string;
   transactions: Transaction[];
 }
 
@@ -42,11 +43,26 @@ export function AccountantView() {
   const initializedDealId = useRef<number | null>(null);
   const [viewMode, setViewMode] = useState<'calculation' | 'execution'>('calculation');
 
-  const { data: deals, isLoading } = useQuery<Deal[]>({
+  // Фильтры/сортировка для общего списка сделок
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<'date' | 'amount'>('date');
+  const [sortDirection, setSortDirection] = useState<'desc' | 'asc'>('desc');
+
+  // Очереди (расчет / исполнение) — как раньше
+  const { data: dealsQueue, isLoading } = useQuery<Deal[]>({
     queryKey: ['deals', 'accountant', viewMode],
     queryFn: async () => {
       const statusFilter = viewMode === 'calculation' ? 'calculation_pending' : 'execution';
       const response = await api.get(`/api/deals?status_filter=${statusFilter}`);
+      return response.data;
+    },
+  });
+
+  // Общий список всех сделок бухгалтера (все статусы)
+  const { data: allDeals } = useQuery<Deal[]>({
+    queryKey: ['deals', 'accountant', 'all'],
+    queryFn: async () => {
+      const response = await api.get('/api/deals');
       return response.data;
     },
   });
@@ -217,13 +233,14 @@ export function AccountantView() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-1">
+        <div className="lg:col-span-1 space-y-6">
+          {/* Очереди расчета / исполнения */}
           <div className="bg-white shadow rounded-lg p-4">
             <h2 className="text-lg font-semibold mb-4">
               {viewMode === 'calculation' ? 'Pending Calculations' : 'Pending Execution'}
             </h2>
             <div className="space-y-2">
-              {deals?.map((deal) => (
+              {dealsQueue?.map((deal) => (
                 <button
                   key={deal.id}
                   onClick={() => setSelectedDeal(deal.id)}
@@ -240,8 +257,113 @@ export function AccountantView() {
                   </p>
                 </button>
               ))}
-              {(!deals || deals.length === 0) && (
-                <p className="text-sm text-gray-500">No pending calculations</p>
+              {(!dealsQueue || dealsQueue.length === 0) && (
+                <p className="text-sm text-gray-500">
+                  {viewMode === 'calculation' ? 'No pending calculations' : 'No pending executions'}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Общий список всех сделок с фильтрами */}
+          <div className="bg-white shadow rounded-lg p-4">
+            <h2 className="text-lg font-semibold mb-4">All Deals</h2>
+
+            {/* Фильтры */}
+            <div className="flex flex-col space-y-3 mb  -4">
+              <div className="flex space-x-2">
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="w-1/2 px-2 py-1 border border-gray-300 rounded-md text-sm"
+                >
+                  <option value="all">All statuses</option>
+                  <option value="new">New</option>
+                  <option value="calculation_pending">Calculation pending</option>
+                  <option value="director_approval_pending">Director approval</option>
+                  <option value="director_rejected">Director rejected</option>
+                  <option value="client_approval">Client approval</option>
+                  <option value="awaiting_payment">Awaiting payment</option>
+                  <option value="execution">Execution</option>
+                  <option value="completed">Completed</option>
+                </select>
+
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as 'date' | 'amount')}
+                  className="w-1/4 px-2 py-1 border border-gray-300 rounded-md text-sm"
+                >
+                  <option value="date">Sort by date</option>
+                  <option value="amount">Sort by amount</option>
+                </select>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSortDirection((prev) => (prev === 'desc' ? 'asc' : 'desc'))
+                  }
+                  className="w-1/4 px-2 py-1 border border-gray-300 rounded-md text-sm"
+                >
+                  {sortDirection === 'desc' ? '↓' : '↑'}
+                </button>
+              </div>
+            </div>
+
+            {/* Список сделок */}
+            <div className="mt-4 max-h-72 overflow-y-auto space-y-2">
+              {allDeals &&
+                allDeals
+                  .filter((deal) => {
+                    if (statusFilter === 'all') return true;
+                    return deal.status === statusFilter;
+                  })
+                  .sort((a, b) => {
+                    if (sortBy === 'date') {
+                      const da = new Date(a.created_at).getTime();
+                      const db = new Date(b.created_at).getTime();
+                      return sortDirection === 'desc' ? db - da : da - db;
+                    }
+                    const aa = parseFloat(a.total_eur_request);
+                    const ab = parseFloat(b.total_eur_request);
+                    return sortDirection === 'desc' ? ab - aa : aa - ab;
+                  })
+                  .map((deal) => (
+                    <button
+                      key={`all-${deal.id}`}
+                      onClick={() => {
+                        setSelectedDeal(deal.id);
+                        setViewMode(
+                          deal.status === 'execution' ? 'execution' : 'calculation',
+                        );
+                      }}
+                      className={`w-full text-left p-3 rounded-md border ${
+                        selectedDeal === deal.id
+                          ? 'border-indigo-500 bg-indigo-50'
+                          : 'border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <p className="font-medium">Deal #{deal.id}</p>
+                          <p className="text-sm text-gray-600">{deal.client_name}</p>
+                          <p className="text-xs text-gray-500">
+                            {new Date(deal.created_at).toLocaleString()}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm text-gray-500">
+                            {parseFloat(deal.total_eur_request).toLocaleString()} EUR
+                          </p>
+                          <span className="inline-flex mt-1 px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-700 capitalize">
+                            {deal.status.replace('_', ' ')}
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+
+              {(!allDeals || allDeals.length === 0) && (
+                <p className="text-sm text-gray-500">No deals found</p>
               )}
             </div>
           </div>

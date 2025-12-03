@@ -11,6 +11,7 @@ import { NewDeal } from './pages/NewDeal';
 import { AccountantView } from './pages/AccountantView';
 import { DirectorView } from './pages/DirectorView';
 import { DirectorDashboard } from './pages/DirectorDashboard';
+import { AccountantDashboard } from './pages/AccountantDashboard';
 
 const queryClient = new QueryClient();
 
@@ -67,6 +68,16 @@ function AppRoutes() {
           <ProtectedRoute allowedRoles={['accountant']}>
             <Layout>
               <AccountantView />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/accountant/dashboard"
+        element={
+          <ProtectedRoute allowedRoles={['accountant']}>
+            <Layout>
+              <AccountantDashboard />
             </Layout>
           </ProtectedRoute>
         }

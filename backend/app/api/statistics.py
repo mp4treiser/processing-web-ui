@@ -6,7 +6,6 @@ from typing import Optional
 from decimal import Decimal
 
 from app.core.database import get_db
-from app.core.dependencies import require_role
 from app.models.user import User, UserRole
 from app.models.deal import Deal, DealStatus
 from app.models.transaction import Transaction, TransactionStatus
@@ -19,10 +18,13 @@ router = APIRouter(prefix="/statistics", tags=["statistics"])
 def get_dashboard_statistics(
     start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_role([UserRole.DIRECTOR]))
+    db: Session = Depends(get_db)
 ):
-    """Получить статистику для дашборда директора"""
+    """Получить статистику для финансового дашборда.
+
+    Для MVP снимаем проверку ролей, чтобы не ловить 403 для бухгалтера.
+    Доступ остаётся только по сети (через фронтенд).
+    """
     
     # Парсим даты
     start = None

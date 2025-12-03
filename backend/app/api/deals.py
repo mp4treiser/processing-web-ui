@@ -57,41 +57,40 @@ def create_deal(
 @router.get("", response_model=List[DealListResponse])
 def get_deals(
     status_filter: DealStatus | None = None,
+    limit: int = 100,
+    offset: int = 0,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Получить список заявок (с фильтрацией по роли)"""
+    """Получить список заявок (с фильтрацией по роли).
+
+    Важно для бухгалтера:
+    - без status_filter он видит все сделки со всеми статусами,
+      и уже на фронтенде может фильтровать/сортировать по статусу, дате и сумме.
+    """
     query = db.query(Deal)
     
     # Row Level Security: Менеджер видит только свои сделки
     if current_user.role == UserRole.MANAGER:
         query = query.filter(Deal.manager_id == current_user.id)
     
-    # Бухгалтер видит заявки на расчет и в исполнении
+    # Бухгалтер: по умолчанию видит все сделки, но может сузить по конкретному статусу
     elif current_user.role == UserRole.ACCOUNTANT:
-        # Если указан фильтр execution, показываем только execution
-        if status_filter == DealStatus.EXECUTION:
-            query = query.filter(Deal.status == DealStatus.EXECUTION)
-        # Если указан фильтр calculation_pending, показываем только calculation_pending и rejected
-        elif status_filter == DealStatus.CALCULATION_PENDING:
-            query = query.filter(
-                Deal.status.in_([DealStatus.CALCULATION_PENDING, DealStatus.DIRECTOR_REJECTED])
-            )
-        # Если фильтр не указан, показываем все доступные статусы
-        else:
-            query = query.filter(
-                Deal.status.in_([DealStatus.CALCULATION_PENDING, DealStatus.EXECUTION, DealStatus.DIRECTOR_REJECTED])
-            )
+        if status_filter:
+            query = query.filter(Deal.status == status_filter)
     
-    # Директор видит заявки на утверждение
+    # Директор: по умолчанию видит все сделки, но может сузить по конкретному статусу
     elif current_user.role == UserRole.DIRECTOR:
-        query = query.filter(Deal.status == DealStatus.DIRECTOR_APPROVAL_PENDING)
+        if status_filter:
+            query = query.filter(Deal.status == status_filter)
     
-    # Применяем фильтр только если он не был применен выше (для других ролей)
-    if status_filter and current_user.role != UserRole.ACCOUNTANT:
+    # Для остальных ролей (если появятся) применяем общий фильтр по статусу
+    if status_filter and current_user.role not in [UserRole.ACCOUNTANT, UserRole.DIRECTOR]:
         query = query.filter(Deal.status == status_filter)
-    
-    deals = query.order_by(Deal.created_at.desc()).all()
+
+    # Пагинация и сортировка: последние сделки первыми
+    query = query.order_by(Deal.created_at.desc()).limit(limit).offset(offset)
+    deals = query.all()
     
     # Формируем ответ с прогрессом
     result = []
