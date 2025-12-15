@@ -6,6 +6,7 @@ from app.core.database import Base
 
 class UserRole(str, enum.Enum):
     MANAGER = "manager"
+    SENIOR_MANAGER = "senior_manager"
     ACCOUNTANT = "accountant"
     DIRECTOR = "director"
 
@@ -17,7 +18,7 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     full_name = Column(String, nullable=True)
-    role = Column(SQLEnum(UserRole), nullable=False, default=UserRole.MANAGER)
+    role = Column(String(50), nullable=False, default=UserRole.MANAGER.value)
     is_active = Column(String, default="true")
 
     # Relationships

@@ -12,6 +12,8 @@ interface DashboardStats {
     total_profit_usdt: number;
     roi_percent: number;
     avg_profit_per_deal: number;
+    total_debt_eur?: number;
+    deals_with_debt?: number;
   };
   status_breakdown: Record<string, number>;
   route_breakdown: Array<{
@@ -28,6 +30,14 @@ interface DashboardStats {
     date: string;
     profit: number;
     deals: number;
+  }>;
+  client_debts: Array<{
+    client_id: number;
+    client_name: string;
+    total_debt: number;
+    deals_count: number;
+    oldest_debt_date: string | null;
+    days_since_oldest: number;
   }>;
 }
 
@@ -182,6 +192,24 @@ export function AccountantDashboard() {
           </div>
         </div>
 
+        {/* Метрика задолженностей */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          <div className="bg-white shadow rounded-lg p-6 border-l-4 border-red-500">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500">Total Client Debt</p>
+                <p className="text-2xl font-bold text-red-600">
+                  {stats.summary.total_debt_eur?.toLocaleString() || '0'} EUR
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {stats.summary.deals_with_debt || 0} deals with debt
+                </p>
+              </div>
+              <div className="text-3xl">⚠️</div>
+            </div>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
           {/* Статистика по статусам */}
           <div className="bg-white shadow rounded-lg p-6">
@@ -228,6 +256,59 @@ export function AccountantDashboard() {
             </div>
           </div>
         </div>
+
+        {/* Задолженности клиентов */}
+        {stats.client_debts && stats.client_debts.length > 0 && (
+          <div className="bg-white shadow rounded-lg p-6 mb-6">
+            <h2 className="text-lg font-semibold mb-4 text-red-600">Client Debts</h2>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      Client
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      Total Debt (EUR)
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      Deals Count
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      Oldest Debt
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      Days Since
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {stats.client_debts.map((debt) => (
+                    <tr key={debt.client_id} className={debt.days_since_oldest > 30 ? 'bg-red-50' : debt.days_since_oldest > 14 ? 'bg-yellow-50' : ''}>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                        {debt.client_name}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-red-600">
+                        {debt.total_debt.toLocaleString()} EUR
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {debt.deals_count}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {debt.oldest_debt_date ? new Date(debt.oldest_debt_date).toLocaleDateString() : '-'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        <span className={debt.days_since_oldest > 30 ? 'text-red-600 font-semibold' : debt.days_since_oldest > 14 ? 'text-yellow-600' : 'text-gray-500'}>
+                          {debt.days_since_oldest} days
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* Топ клиенты */}
         <div className="bg-white shadow rounded-lg p-6 mb-6">

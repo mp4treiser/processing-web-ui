@@ -4,16 +4,16 @@ from sqlalchemy.sql import func
 from app.core.database import Base
 
 
-class Client(Base):
-    __tablename__ = "clients"
+class CompanyAccount(Base):
+    __tablename__ = "company_accounts"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False, index=True)
-    contact_info = Column(String, nullable=True)
-    notes = Column(String, nullable=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
+    account_name = Column(String, nullable=False)  # "IBAN EUR", "BTC Wallet" и т.д.
+    account_number = Column(String, nullable=False)  # IBAN, адрес кошелька и т.д.
+    currency = Column(String, nullable=True)  # "EUR", "USD", "BTC", "USDT" и т.д.
     
     # Аудит
-    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     
     # Даты
@@ -21,6 +21,5 @@ class Client(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     # Relationships
-    deals = relationship("Deal", back_populates="client")
-    companies = relationship("Company", back_populates="client", cascade="all, delete-orphan")
+    company = relationship("Company", back_populates="accounts")
 

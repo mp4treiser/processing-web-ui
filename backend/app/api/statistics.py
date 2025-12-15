@@ -6,7 +6,9 @@ from typing import Optional
 from decimal import Decimal
 
 from app.core.database import get_db
-from app.models.user import User, UserRole
+from app.core.dependencies import get_current_active_user
+from app.core.permissions import require_permission
+from app.models.user import User
 from app.models.deal import Deal, DealStatus
 from app.models.transaction import Transaction, TransactionStatus
 from app.models.client import Client
@@ -18,13 +20,10 @@ router = APIRouter(prefix="/statistics", tags=["statistics"])
 def get_dashboard_statistics(
     start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("exchanges.statistics.read"))
 ):
-    """Получить статистику для финансового дашборда.
-
-    Для MVP снимаем проверку ролей, чтобы не ловить 403 для бухгалтера.
-    Доступ остаётся только по сети (через фронтенд).
-    """
+    """Получить статистику для финансового дашборда."""
     
     # Парсим даты
     start = None
@@ -45,10 +44,10 @@ def get_dashboard_statistics(
     
     # Общая статистика по сделкам
     total_deals = query.count()
-    completed_deals = query.filter(Deal.status == DealStatus.COMPLETED).count()
+    completed_deals = query.filter(Deal.status == DealStatus.COMPLETED.value).count()
     
     # Суммы по завершенным сделкам с учетом фильтров по датам
-    completed_filters = [Deal.status == DealStatus.COMPLETED]
+    completed_filters = [Deal.status == DealStatus.COMPLETED.value]
     if start:
         completed_filters.append(Deal.created_at >= start)
     if end:
@@ -86,10 +85,11 @@ def get_dashboard_statistics(
         func.count(Deal.id).label('count')
     ).group_by(Deal.status).all()
     
-    status_breakdown = {status.value: count for status, count in status_stats}
+    # status уже является строкой, так как колонка имеет тип String(50)
+    status_breakdown = {str(status): count for status, count in status_stats}
     
     # Статистика по роутам транзакций
-    route_filters = [Deal.status == DealStatus.COMPLETED]
+    route_filters = [Deal.status == DealStatus.COMPLETED.value]
     if start:
         route_filters.append(Deal.created_at >= start)
     if end:
@@ -113,7 +113,7 @@ def get_dashboard_statistics(
             })
     
     # Топ клиенты по объему
-    client_filters = [Deal.status == DealStatus.COMPLETED]
+    client_filters = [Deal.status == DealStatus.COMPLETED.value]
     if start:
         client_filters.append(Deal.created_at >= start)
     if end:
@@ -149,7 +149,7 @@ def get_dashboard_statistics(
             
             day_profit = db.query(func.sum(Deal.net_profit_usdt)).filter(
                 and_(
-                    Deal.status == DealStatus.COMPLETED,
+                    Deal.status == DealStatus.COMPLETED.value,
                     Deal.created_at >= day_start,
                     Deal.created_at <= day_end
                 )
@@ -157,7 +157,7 @@ def get_dashboard_statistics(
             
             day_deals = db.query(func.count(Deal.id)).filter(
                 and_(
-                    Deal.status == DealStatus.COMPLETED,
+                    Deal.status == DealStatus.COMPLETED.value,
                     Deal.created_at >= day_start,
                     Deal.created_at <= day_end
                 )
@@ -171,6 +171,48 @@ def get_dashboard_statistics(
             
             current += timedelta(days=1)
     
+    # Статистика по задолженностям клиентов
+    debt_filters = [Deal.is_client_debt == "true", Deal.client_debt_amount > 0]
+    if start:
+        debt_filters.append(Deal.created_at >= start)
+    if end:
+        debt_filters.append(Deal.created_at <= end)
+    
+    # Общая сумма задолженностей
+    total_debt = db.query(func.sum(Deal.client_debt_amount)).filter(
+        and_(*debt_filters)
+    ).scalar() or Decimal('0')
+    
+    # Количество сделок с задолженностями
+    deals_with_debt = db.query(func.count(Deal.id)).filter(
+        and_(*debt_filters)
+    ).scalar() or 0
+    
+    # Детализация по клиентам с задолженностями
+    client_debts = db.query(
+        Client.id,
+        Client.name,
+        func.sum(Deal.client_debt_amount).label('total_debt'),
+        func.count(Deal.id).label('deals_count'),
+        func.min(Deal.created_at).label('oldest_debt_date')
+    ).join(Deal).filter(
+        and_(*debt_filters)
+    ).group_by(Client.id, Client.name).order_by(
+        func.sum(Deal.client_debt_amount).desc()
+    ).all()
+    
+    client_debts_list = [
+        {
+            'client_id': client_id,
+            'client_name': name,
+            'total_debt': float(total_debt or 0),
+            'deals_count': deals_count,
+            'oldest_debt_date': oldest_debt_date.isoformat() if oldest_debt_date else None,
+            'days_since_oldest': (datetime.utcnow().date() - oldest_debt_date.date()).days if oldest_debt_date else 0
+        }
+        for client_id, name, total_debt, deals_count, oldest_debt_date in client_debts
+    ]
+    
     return {
         'summary': {
             'total_deals': total_deals,
@@ -181,10 +223,13 @@ def get_dashboard_statistics(
             'total_profit_usdt': float(total_profit),
             'roi_percent': float(roi),
             'avg_profit_per_deal': float(avg_margin),
+            'total_debt_eur': float(total_debt),
+            'deals_with_debt': deals_with_debt,
         },
         'status_breakdown': status_breakdown,
         'route_breakdown': route_breakdown,
         'top_clients': top_clients_list,
-        'daily_stats': daily_stats
+        'daily_stats': daily_stats,
+        'client_debts': client_debts_list
     }
 

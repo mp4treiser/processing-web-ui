@@ -1,11 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from decimal import Decimal
+from datetime import datetime
+from typing import Optional
 from app.core.database import get_db
-from app.core.dependencies import get_current_active_user, require_role
+from app.core.dependencies import get_current_active_user
+from app.core.permissions import require_permission
 from app.models.user import User, UserRole
 from app.models.deal import Deal, DealStatus
 from app.models.transaction import Transaction, TransactionStatus
+from app.models.account_balance import AccountBalance
+from app.models.account_balance_history import AccountBalanceHistory, BalanceChangeType
 from app.schemas.transaction import TransactionUpdate, TransactionResponse
 from app.services.calculation import calculate_transaction_cost, calculate_deal_totals
 
@@ -17,7 +22,7 @@ def update_transaction(
     transaction_id: int,
     transaction_update: TransactionUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role([UserRole.ACCOUNTANT]))
+    current_user: User = Depends(require_permission("exchanges.transactions.update"))
 ):
     """Обновление транзакции (выбор маршрута, параметры) - Бухгалтер"""
     transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
@@ -25,7 +30,7 @@ def update_transaction(
         raise HTTPException(status_code=404, detail="Transaction not found")
     
     deal = db.query(Deal).filter(Deal.id == transaction.deal_id).first()
-    if deal.status not in [DealStatus.CALCULATION_PENDING, DealStatus.DIRECTOR_REJECTED]:
+    if deal.status not in [DealStatus.CALCULATION_PENDING.value, DealStatus.DIRECTOR_REJECTED.value]:
         raise HTTPException(status_code=400, detail="Deal is not in calculation status")
     
     # Обновляем поля
@@ -49,7 +54,7 @@ def calculate_transaction(
     transaction_id: int,
     market_rate: Decimal,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role([UserRole.ACCOUNTANT]))
+    current_user: User = Depends(require_permission("exchanges.transactions.calculate"))
 ):
     """Пересчет транзакции с указанным курсом"""
     transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
@@ -72,7 +77,7 @@ def calculate_all_transactions(
     deal_id: int,
     market_rate: Decimal,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role([UserRole.ACCOUNTANT]))
+    current_user: User = Depends(require_permission("exchanges.transactions.calculate"))
 ):
     """Рассчитать все транзакции сделки и итоговые суммы"""
     deal = db.query(Deal).filter(Deal.id == deal_id).first()
@@ -121,7 +126,7 @@ def mark_transaction_paid(
     transaction_id: int,
     payment_proof_file: str | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role([UserRole.ACCOUNTANT]))
+    current_user: User = Depends(require_permission("exchanges.transactions.execute"))
 ):
     """Отметить транзакцию как оплаченную (Бухгалтер)"""
     transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
@@ -138,7 +143,95 @@ def mark_transaction_paid(
     deal = db.query(Deal).filter(Deal.id == transaction.deal_id).first()
     all_transactions = db.query(Transaction).filter(Transaction.deal_id == deal.id).all()
     if all(t.status == TransactionStatus.PAID for t in all_transactions):
-        deal.status = DealStatus.COMPLETED
+        deal.status = DealStatus.COMPLETED.value
+    
+    db.commit()
+    db.refresh(transaction)
+    return transaction
+
+
+@router.post("/{transaction_id}/execute", response_model=TransactionResponse)
+def execute_transaction(
+    transaction_id: int,
+    account_balance_id: int = Query(..., description="ID остатка по счету для списания"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("exchanges.transactions.execute"))
+):
+    """Выполнить транзакцию с автоматическим списанием остатка по счету"""
+    
+    transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    
+    # Проверяем, что транзакция еще не выполнена
+    if transaction.status == TransactionStatus.PAID:
+        raise HTTPException(status_code=400, detail="Transaction already executed")
+    
+    # Получаем остаток по счету
+    account_balance = db.query(AccountBalance).filter(AccountBalance.id == account_balance_id).first()
+    if not account_balance:
+        raise HTTPException(status_code=404, detail="Account balance not found")
+    
+    # Получаем сделку для проверки статуса
+    deal = db.query(Deal).filter(Deal.id == transaction.deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+    
+    # Проверяем, что сделка в статусе для выполнения транзакций
+    # Транзакции можно выполнять только после того, как менеджер подтвердил оплату от клиента
+    # Разрешаем выполнение транзакций даже при наличии задолженности клиента
+    # (сделка должна быть в статусе EXECUTION или CLIENT_PARTIALLY_PAID - т.е. менеджер подтвердил оплату)
+    allowed_statuses = [
+        DealStatus.EXECUTION.value,
+        DealStatus.CLIENT_PARTIALLY_PAID.value
+    ]
+    if deal.status not in allowed_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Deal must be in EXECUTION or CLIENT_PARTIALLY_PAID status (manager must confirm client payment first). Current status: {deal.status}"
+        )
+    
+    # Вычисляем сумму для списания (cost_usdt или amount_eur, если cost_usdt не установлен)
+    # Для простоты используем amount_eur, конвертированный в валюту остатка
+    # В реальности нужно учитывать валюту транзакции и остатка
+    amount_to_debit = transaction.cost_usdt if transaction.cost_usdt else Decimal(str(transaction.amount_eur))
+    
+    # Проверяем достаточность средств
+    if account_balance.balance < amount_to_debit:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Insufficient balance. Available: {account_balance.balance}, Required: {amount_to_debit}"
+        )
+    
+    # Сохраняем предыдущий остаток для истории
+    previous_balance = account_balance.balance
+    
+    # Списываем средства
+    account_balance.balance -= amount_to_debit
+    new_balance = account_balance.balance
+    
+    # Создаем запись в истории изменений остатка
+    balance_history = AccountBalanceHistory(
+        account_balance_id=account_balance_id,
+        previous_balance=previous_balance,
+        new_balance=new_balance,
+        change_amount=-amount_to_debit,  # Отрицательное значение для списания
+        change_type=BalanceChangeType.AUTO,  # Автоматическое списание при проведении транзакции
+        transaction_id=transaction_id,
+        deal_id=deal.id,
+        changed_by=current_user.id,
+        comment=f"Transaction execution for deal #{deal.id}"
+    )
+    db.add(balance_history)
+    
+    # Отмечаем транзакцию как выполненную
+    transaction.status = TransactionStatus.PAID
+    transaction.paid_at = datetime.utcnow()
+    
+    # Проверяем, все ли транзакции в сделке выполнены
+    all_transactions = db.query(Transaction).filter(Transaction.deal_id == deal.id).all()
+    if all(t.status == TransactionStatus.PAID for t in all_transactions):
+        deal.status = DealStatus.COMPLETED.value
     
     db.commit()
     db.refresh(transaction)

@@ -9,9 +9,11 @@ import { Dashboard } from './pages/Dashboard';
 import { DealDetail } from './pages/DealDetail';
 import { NewDeal } from './pages/NewDeal';
 import { AccountantView } from './pages/AccountantView';
-import { DirectorView } from './pages/DirectorView';
 import { DirectorDashboard } from './pages/DirectorDashboard';
 import { AccountantDashboard } from './pages/AccountantDashboard';
+import { SeniorManagerView } from './pages/SeniorManagerView';
+import { ReferencesPage } from './pages/ReferencesPage';
+import { DebtsList } from './pages/DebtsList';
 
 const queryClient = new QueryClient();
 
@@ -45,7 +47,7 @@ function AppRoutes() {
       <Route
         path="/deals/new"
         element={
-          <ProtectedRoute allowedRoles={['manager']}>
+          <ProtectedRoute allowedRoles={['manager', 'accountant']}>
             <Layout>
               <NewDeal />
             </Layout>
@@ -83,21 +85,41 @@ function AppRoutes() {
         }
       />
       <Route
-        path="/director"
-        element={
-          <ProtectedRoute allowedRoles={['director']}>
-            <Layout>
-              <DirectorView />
-            </Layout>
-          </ProtectedRoute>
-        }
-      />
-      <Route
         path="/director/dashboard"
         element={
           <ProtectedRoute allowedRoles={['director']}>
             <Layout>
               <DirectorDashboard />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/senior-manager"
+        element={
+          <ProtectedRoute allowedRoles={['senior_manager']}>
+            <Layout>
+              <SeniorManagerView />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/references"
+        element={
+          <ProtectedRoute allowedRoles={['manager', 'senior_manager', 'accountant', 'director']}>
+            <Layout>
+              <ReferencesPage />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/debts"
+        element={
+          <ProtectedRoute allowedRoles={['manager', 'accountant']}>
+            <Layout>
+              <DebtsList />
             </Layout>
           </ProtectedRoute>
         }

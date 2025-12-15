@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 from app.core.database import get_db
-from app.core.dependencies import require_role
+from app.core.permissions import require_permission
 from app.models.user import User, UserRole
 from app.models.deal import Deal, DealStatus
 from app.schemas.deal import DealResponse, DealListResponse
@@ -13,11 +13,11 @@ router = APIRouter(prefix="/director", tags=["director"])
 @router.get("/pending", response_model=List[DealListResponse])
 def get_pending_approvals(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role([UserRole.DIRECTOR]))
+    current_user: User = Depends(require_permission("exchanges.deals.read_all"))
 ):
     """Список заявок на утверждение (ФинДиректор)"""
     deals = db.query(Deal).filter(
-        Deal.status == DealStatus.DIRECTOR_APPROVAL_PENDING
+        Deal.status == DealStatus.DIRECTOR_APPROVAL_PENDING.value
     ).order_by(Deal.created_at.desc()).all()
     
     result = []
@@ -34,7 +34,9 @@ def get_pending_approvals(
             total_usdt_calculated=deal.total_usdt_calculated,
             status=deal.status,
             created_at=deal.created_at,
-            progress={"paid": paid_count, "total": len(transactions)} if transactions else None
+            progress={"paid": paid_count, "total": len(transactions)} if transactions else None,
+            client_debt_amount=deal.client_debt_amount,
+            client_paid_amount=deal.client_paid_amount
         ))
     
     return result
@@ -44,18 +46,18 @@ def get_pending_approvals(
 def approve_deal(
     deal_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role([UserRole.DIRECTOR]))
+    current_user: User = Depends(require_permission("exchanges.deals.update"))
 ):
     """Утвердить сделку (ФинДиректор)"""
     deal = db.query(Deal).filter(Deal.id == deal_id).first()
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
     
-    if deal.status != DealStatus.DIRECTOR_APPROVAL_PENDING:
+    if deal.status != DealStatus.DIRECTOR_APPROVAL_PENDING.value:
         raise HTTPException(status_code=400, detail="Deal is not pending approval")
     
     from datetime import datetime
-    deal.status = DealStatus.CLIENT_APPROVAL
+    deal.status = DealStatus.CLIENT_APPROVAL.value
     deal.approved_at = datetime.utcnow()
     deal.approved_by = current_user.id
     
@@ -69,17 +71,17 @@ def reject_deal(
     deal_id: int,
     comment: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role([UserRole.DIRECTOR]))
+    current_user: User = Depends(require_permission("exchanges.deals.update"))
 ):
     """Отклонить сделку (ФинДиректор)"""
     deal = db.query(Deal).filter(Deal.id == deal_id).first()
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
     
-    if deal.status != DealStatus.DIRECTOR_APPROVAL_PENDING:
+    if deal.status != DealStatus.DIRECTOR_APPROVAL_PENDING.value:
         raise HTTPException(status_code=400, detail="Deal is not pending approval")
     
-    deal.status = DealStatus.DIRECTOR_REJECTED
+    deal.status = DealStatus.DIRECTOR_REJECTED.value
     deal.director_comment = comment
     
     db.commit()

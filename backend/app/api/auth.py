@@ -7,7 +7,7 @@ from app.core.security import verify_password, get_password_hash, create_access_
 from app.core.config import settings
 from app.core.dependencies import get_current_active_user
 from app.schemas.user import UserCreate, UserResponse, Token
-from app.models.user import User
+from app.models.user import User, UserRole
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -24,11 +24,15 @@ def register(user_data: UserCreate, db: Session = Depends(get_db)):
     
     # Создаем нового пользователя
     hashed_password = get_password_hash(user_data.password)
+    # Убеждаемся, что используем значение enum (например, "senior_manager"), а не имя константы
+    # user_data.role - это UserRole enum, берем его значение
+    role_value = user_data.role.value if isinstance(user_data.role, UserRole) else str(user_data.role)
+    
     db_user = User(
         email=user_data.email,
         hashed_password=hashed_password,
         full_name=user_data.full_name,
-        role=user_data.role
+        role=role_value
     )
     db.add(db_user)
     db.commit()
@@ -56,8 +60,10 @@ def login(
         )
     
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    # user.role теперь строка, а не enum объект
+    role_value = user.role if isinstance(user.role, str) else user.role.value
     access_token = create_access_token(
-        data={"sub": user.email, "role": user.role.value},
+        data={"sub": user.email, "role": role_value},
         expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}

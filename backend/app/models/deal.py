@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Numeric, DateTime, ForeignKey, Text, Enum as SQLEnum
+from sqlalchemy import Column, Integer, String, Numeric, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum
@@ -7,13 +7,20 @@ from app.core.database import Base
 
 class DealStatus(str, enum.Enum):
     NEW = "new"
+    SENIOR_MANAGER_REVIEW = "senior_manager_review"
+    SENIOR_MANAGER_APPROVED = "senior_manager_approved"
+    SENIOR_MANAGER_REJECTED = "senior_manager_rejected"
+    CLIENT_AGREED_TO_PAY = "client_agreed_to_pay"
+    AWAITING_CLIENT_PAYMENT = "awaiting_client_payment"
+    CLIENT_PARTIALLY_PAID = "client_partially_paid"
+    EXECUTION = "execution"
+    COMPLETED = "completed"
+    # Старые статусы для обратной совместимости (можно удалить после миграции)
     CALCULATION_PENDING = "calculation_pending"
     DIRECTOR_APPROVAL_PENDING = "director_approval_pending"
     DIRECTOR_REJECTED = "director_rejected"
     CLIENT_APPROVAL = "client_approval"
     AWAITING_PAYMENT = "awaiting_payment"
-    EXECUTION = "execution"
-    COMPLETED = "completed"
 
 
 class Deal(Base):
@@ -36,10 +43,23 @@ class Deal(Base):
     partner_share_usdt = Column(Numeric(15, 2), nullable=True)
     
     # Статус и аудит
-    status = Column(SQLEnum(DealStatus), default=DealStatus.NEW, nullable=False)
+    # Используем String вместо SQLEnum, чтобы избежать проблем с регистром enum в PostgreSQL
+    # Значения enum будут храниться как строки (например, "senior_manager_approved")
+    status = Column(String(50), default=DealStatus.NEW.value, nullable=False)
     director_comment = Column(Text, nullable=True)
     approved_at = Column(DateTime, nullable=True)
     approved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    
+    # Главный менеджер
+    senior_manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    senior_manager_comment = Column(Text, nullable=True)
+    approved_by_senior_manager_at = Column(DateTime, nullable=True)
+    
+    # Задолженности клиента
+    client_debt_amount = Column(Numeric(15, 2), default=0, nullable=False)
+    client_paid_amount = Column(Numeric(15, 2), default=0, nullable=False)
+    is_client_debt = Column(String, default="false")  # Boolean as string for compatibility
+    client_payment_confirmed_at = Column(DateTime, nullable=True)
     
     # Даты
     created_at = Column(DateTime, server_default=func.now())

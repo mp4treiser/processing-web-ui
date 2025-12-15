@@ -1,26 +1,26 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.database import Base
 
 
-class Client(Base):
-    __tablename__ = "clients"
+class Company(Base):
+    __tablename__ = "companies"
 
     id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     name = Column(String, nullable=False, index=True)
     contact_info = Column(String, nullable=True)
-    notes = Column(String, nullable=True)
+    notes = Column(Text, nullable=True)
     
     # Аудит
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
-    is_active = Column(Boolean, default=True, nullable=False)
     
     # Даты
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     # Relationships
-    deals = relationship("Deal", back_populates="client")
-    companies = relationship("Company", back_populates="client", cascade="all, delete-orphan")
+    client = relationship("Client", back_populates="companies")
+    accounts = relationship("CompanyAccount", back_populates="company", cascade="all, delete-orphan")
 

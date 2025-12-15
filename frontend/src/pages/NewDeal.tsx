@@ -2,14 +2,29 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { TransactionForm } from './TransactionForm';
 
 interface Client {
   id: number;
   name: string;
 }
 
+interface Company {
+  id: number;
+  client_id: number;
+  name: string;
+}
+
+interface CompanyAccount {
+  id: number;
+  company_id: number;
+  account_name: string;
+  account_number: string;
+}
+
 interface Transaction {
-  target_company: string;
+  company_id: number | '';
+  account_id: number | '';
   amount_eur: number;
   recipient_details?: string;
 }
@@ -21,15 +36,43 @@ export function NewDeal() {
   const [totalEur, setTotalEur] = useState<string>('');
   const [clientRate, setClientRate] = useState<string>('1.0');
   const [transactions, setTransactions] = useState<Transaction[]>([
-    { target_company: '', amount_eur: 0, recipient_details: '' },
+    { company_id: '', account_id: '', amount_eur: 0, recipient_details: '' },
   ]);
 
   const { data: clients } = useQuery<Client[]>({
-    queryKey: ['clients'],
+    queryKey: ['reference-clients'],
     queryFn: async () => {
-      const response = await api.get('/api/clients');
+      try {
+        const response = await api.get('/api/reference/clients');
+        return response.data;
+      } catch (error) {
+        console.error('Error fetching clients:', error);
+        return [];
+      }
+    },
+  });
+
+  // Загружаем компании выбранного клиента
+  const { data: companies } = useQuery<Company[]>({
+    queryKey: ['reference-companies', clientId],
+    queryFn: async () => {
+      if (!clientId) return [];
+      const response = await api.get(`/api/reference/companies?client_id=${clientId}`);
       return response.data;
     },
+    enabled: !!clientId,
+  });
+
+  // Проверяем задолженности выбранного клиента
+  const { data: clientDebts } = useQuery({
+    queryKey: ['client-debts', clientId],
+    queryFn: async () => {
+      if (!clientId) return [];
+      const response = await api.get('/api/accountant/client-debts');
+      // Фильтруем по выбранному клиенту
+      return response.data.filter((deal: any) => deal.client_id === clientId);
+    },
+    enabled: !!clientId,
   });
 
   const createMutation = useMutation({
@@ -44,7 +87,7 @@ export function NewDeal() {
   });
 
   const addTransaction = () => {
-    setTransactions([...transactions, { target_company: '', amount_eur: 0, recipient_details: '' }]);
+    setTransactions([...transactions, { company_id: '', account_id: '', amount_eur: 0, recipient_details: '' }]);
   };
 
   const removeTransaction = (index: number) => {
@@ -54,6 +97,12 @@ export function NewDeal() {
   const updateTransaction = (index: number, field: keyof Transaction, value: string | number) => {
     const updated = [...transactions];
     updated[index] = { ...updated[index], [field]: value };
+    
+    // Если изменилась компания, сбрасываем счет
+    if (field === 'company_id') {
+      updated[index].account_id = '';
+    }
+    
     setTransactions(updated);
   };
 
@@ -61,30 +110,68 @@ export function NewDeal() {
     return transactions.reduce((sum, t) => sum + (t.amount_eur || 0), 0);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!clientId) {
-      alert('Please select a client');
+      alert('Пожалуйста, выберите клиента');
       return;
     }
 
     const total = calculateTotal();
     if (Math.abs(total - parseFloat(totalEur || '0')) > 0.01) {
-      alert(`Sum of transactions (${total}) does not match total (${totalEur})`);
+      alert(`Сумма транзакций (${total}) не совпадает с общей суммой (${totalEur})`);
       return;
     }
 
-    createMutation.mutate({
-      client_id: clientId,
-      total_eur_request: totalEur,
-      client_rate_percent: clientRate,
-      transactions: transactions.map((t) => ({
-        target_company: t.target_company,
-        amount_eur: t.amount_eur,
-        recipient_details: t.recipient_details || null,
-      })),
-    });
+    // Валидация: проверяем, что все счета уникальны
+    const accountIds = transactions
+      .map(t => t.account_id)
+      .filter(id => id !== '') as number[];
+    
+    const uniqueAccountIds = new Set(accountIds);
+    if (accountIds.length !== uniqueAccountIds.size) {
+      alert('Ошибка: нельзя использовать один и тот же счет дважды');
+      return;
+    }
+
+    // Валидация: все транзакции должны иметь компанию и счет
+    const invalidTransactions = transactions.filter(t => !t.company_id || !t.account_id);
+    if (invalidTransactions.length > 0) {
+      alert('Пожалуйста, выберите компанию и счет для всех транзакций');
+      return;
+    }
+
+    try {
+      // Получаем названия компаний и IBAN из выбранных счетов
+      const transactionsWithDetails = await Promise.all(
+        transactions.map(async (t) => {
+          // Загружаем данные счета для получения IBAN
+          const accountResponse = await api.get(`/api/reference/company-accounts/${t.account_id}`);
+          const account: CompanyAccount = accountResponse.data;
+          
+          // Загружаем данные компании для получения названия
+          const companyResponse = await api.get(`/api/reference/companies/${t.company_id}`);
+          const company: Company = companyResponse.data;
+          
+          return {
+            target_company: company.name,
+            amount_eur: t.amount_eur,
+            recipient_details: account.account_number || t.recipient_details || null,
+          };
+        })
+      );
+
+      createMutation.mutate({
+        client_id: clientId,
+        total_eur_request: totalEur,
+        client_rate_percent: clientRate,
+        transactions: transactionsWithDetails,
+      });
+    } catch (error) {
+      console.error('Error preparing transaction data:', error);
+      alert('Ошибка при подготовке данных транзакций');
+    }
   };
 
   return (
@@ -92,6 +179,29 @@ export function NewDeal() {
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Create New Deal</h1>
 
       <form onSubmit={handleSubmit} className="bg-white shadow rounded-lg p-6 space-y-6">
+        {/* Предупреждение о задолженности */}
+        {clientDebts && clientDebts.length > 0 && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <p className="text-sm font-medium text-yellow-800 mb-2">
+              ⚠️ Client has debt:
+            </p>
+            <ul className="list-disc list-inside text-sm text-yellow-700 space-y-1">
+              {clientDebts.map((deal: any) => (
+                <li key={deal.id}>
+                  Deal #{deal.id}: {parseFloat(deal.client_debt_amount || '0').toLocaleString()} EUR
+                  {' '}
+                  <span className="text-xs">
+                    ({Math.ceil((new Date().getTime() - new Date(deal.created_at).getTime()) / (1000 * 60 * 60 * 24))} days)
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-yellow-600 mt-2">
+              It is recommended to remind the client about the debt and offer to pay it off as part of this deal.
+            </p>
+          </div>
+        )}
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Client *
@@ -167,38 +277,14 @@ export function NewDeal() {
                     </button>
                   )}
                 </div>
-                <div className="grid grid-cols-2 gap-4 mb-3">
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">Company Name *</label>
-                    <input
-                      type="text"
-                      value={trans.target_company}
-                      onChange={(e) => updateTransaction(index, 'target_company', e.target.value)}
-                      required
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">Amount EUR *</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={trans.amount_eur || ''}
-                      onChange={(e) => updateTransaction(index, 'amount_eur', parseFloat(e.target.value) || 0)}
-                      required
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">Recipient Details (IBAN)</label>
-                  <textarea
-                    value={trans.recipient_details || ''}
-                    onChange={(e) => updateTransaction(index, 'recipient_details', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-                    rows={2}
-                  />
-                </div>
+                <TransactionForm
+                  index={index}
+                  transaction={trans}
+                  clientId={clientId}
+                  companies={companies || []}
+                  transactions={transactions}
+                  onUpdate={updateTransaction}
+                />
               </div>
             ))}
           </div>

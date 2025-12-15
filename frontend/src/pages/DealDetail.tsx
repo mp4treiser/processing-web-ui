@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -21,6 +22,10 @@ interface Deal {
   total_usdt_calculated: string | null;
   status: string;
   transactions: Transaction[];
+  client_debt_amount: string | null;
+  client_paid_amount: string | null;
+  is_client_debt: string | null;
+  senior_manager_comment: string | null;
 }
 
 export function DealDetail() {
@@ -44,9 +49,11 @@ export function DealDetail() {
   });
 
   // Все хуки должны быть вызваны до любых условных возвратов!
-  const submitMutation = useMutation({
+  // Кнопка "Submit for Calculation" убрана - сделка автоматически видна главному менеджеру при создании
+
+  const clientAgreedMutation = useMutation({
     mutationFn: async () => {
-      await api.post(`/api/deals/${id}/submit-for-calculation`);
+      await api.post(`/api/deals/${id}/client-agreed-to-pay`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['deal', id] });
@@ -54,9 +61,19 @@ export function DealDetail() {
     },
   });
 
-  const approveClientMutation = useMutation({
-    mutationFn: async () => {
-      await api.post(`/api/deals/${id}/approve-client`);
+  const confirmPaymentMutation = useMutation({
+    mutationFn: async (data: { client_paid_amount: number; is_partial: boolean }) => {
+      await api.post(`/api/deals/${id}/confirm-client-payment`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['deal', id] });
+      queryClient.invalidateQueries({ queryKey: ['deals'] });
+    },
+  });
+
+  const payDebtMutation = useMutation({
+    mutationFn: async (payment_amount: number) => {
+      await api.post(`/api/deals/${id}/pay-debt`, { payment_amount });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['deal', id] });
@@ -97,9 +114,12 @@ export function DealDetail() {
     return <div className="text-center py-8">Deal not found</div>;
   }
 
-  const canSubmit = user?.role === 'manager' && deal.status === 'new';
-  const canApproveClient = user?.role === 'manager' && deal.status === 'client_approval';
+  // По новой логике: сделка создается со статусом NEW и автоматически видна главному менеджеру
+  // Кнопка "Submit for Calculation" больше не нужна
+  const canClientAgreed = user?.role === 'manager' && deal.status === 'senior_manager_approved';
+  const canConfirmPayment = user?.role === 'manager' && (deal.status === 'client_agreed_to_pay' || deal.status === 'awaiting_client_payment');
   const canMarkPaid = user?.role === 'accountant' && deal.status === 'execution';
+  const hasDebt = deal.is_client_debt === 'true' && parseFloat(deal.client_debt_amount || '0') > 0;
   
   const progress = deal.transactions
     ? {
@@ -160,25 +180,46 @@ export function DealDetail() {
           </div>
         )}
 
-        <div className="mt-4 flex space-x-4">
-          {canSubmit && (
+        {/* Информация о задолженности */}
+        {hasDebt && (
+          <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded">
+            <p className="text-sm font-medium text-yellow-800">
+              ⚠️ Client Debt: {parseFloat(deal.client_debt_amount || '0').toLocaleString()} EUR
+            </p>
+            <p className="text-xs text-yellow-600 mt-1">
+              Paid: {parseFloat(deal.client_paid_amount || '0').toLocaleString()} EUR of {parseFloat(deal.total_eur_request).toLocaleString()} EUR
+            </p>
+          </div>
+        )}
+
+        {/* Комментарий главного менеджера */}
+        {deal.senior_manager_comment && (
+          <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded">
+            <p className="text-sm font-medium text-blue-800">Senior Manager Comment:</p>
+            <p className="text-sm text-blue-700 mt-1">{deal.senior_manager_comment}</p>
+          </div>
+        )}
+
+        <div className="mt-4 flex flex-col space-y-2">
+          {/* Информация о статусе для менеджера */}
+          {user?.role === 'manager' && deal.status === 'new' && (
+            <div className="px-4 py-2 bg-blue-50 border border-blue-200 rounded-md">
+              <p className="text-sm text-blue-800">
+                ℹ️ Deal has been sent to senior manager for review. Awaiting approval.
+              </p>
+            </div>
+          )}
+          {canClientAgreed && (
             <button
-              onClick={() => submitMutation.mutate()}
-              disabled={submitMutation.isPending}
-              className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
+              onClick={() => clientAgreedMutation.mutate()}
+              disabled={clientAgreedMutation.isPending}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
             >
-              {submitMutation.isPending ? 'Submitting...' : 'Submit for Calculation'}
+              {clientAgreedMutation.isPending ? 'Saving...' : 'Client Agreed to Pay'}
             </button>
           )}
-          {canApproveClient && (
-            <button
-              onClick={() => approveClientMutation.mutate()}
-              disabled={approveClientMutation.isPending}
-              className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
-            >
-              {approveClientMutation.isPending ? 'Approving...' : 'Client Approved - Await Payment'}
-            </button>
-          )}
+          {canConfirmPayment && <PaymentConfirmationForm deal={deal} onConfirm={confirmPaymentMutation} />}
+          {hasDebt && user?.role === 'manager' && <DebtPaymentForm deal={deal} onPay={payDebtMutation} />}
         </div>
       </div>
 
@@ -263,6 +304,101 @@ export function DealDetail() {
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Компонент для подтверждения оплаты
+function PaymentConfirmationForm({ deal, onConfirm }: { deal: Deal; onConfirm: any }) {
+  const [isPartial, setIsPartial] = useState(false);
+  const [paidAmount, setPaidAmount] = useState<string>('');
+
+  const handleSubmit = () => {
+    const amount = isPartial ? parseFloat(paidAmount) : parseFloat(deal.total_eur_request);
+    onConfirm.mutate({
+      client_paid_amount: amount,
+      is_partial: isPartial,
+    });
+  };
+
+  return (
+    <div className="p-4 border border-gray-300 rounded-md bg-gray-50">
+      <h3 className="font-medium mb-3">Confirm Client Payment</h3>
+      <div className="space-y-3">
+        <label className="flex items-center">
+          <input
+            type="checkbox"
+            checked={isPartial}
+            onChange={(e) => setIsPartial(e.target.checked)}
+            className="mr-2"
+          />
+          <span className="text-sm">Partial Payment</span>
+        </label>
+        {isPartial && (
+          <div>
+            <label className="block text-sm font-medium mb-1">Amount Paid by Client (EUR)</label>
+            <input
+              type="number"
+              step="0.01"
+              value={paidAmount}
+              onChange={(e) => setPaidAmount(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              placeholder="Enter amount"
+            />
+            {paidAmount && (
+              <p className="text-xs text-gray-600 mt-1">
+                Debt will be: {(parseFloat(deal.total_eur_request) - parseFloat(paidAmount)).toLocaleString()} EUR
+              </p>
+            )}
+          </div>
+        )}
+        <button
+          onClick={handleSubmit}
+          disabled={onConfirm.isPending || (isPartial && !paidAmount)}
+          className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+        >
+          {onConfirm.isPending ? 'Confirming...' : 'Confirm Payment'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Компонент для погашения задолженности
+function DebtPaymentForm({ deal, onPay }: { deal: Deal; onPay: any }) {
+  const [paymentAmount, setPaymentAmount] = useState<string>('');
+
+  const handleSubmit = () => {
+    if (paymentAmount) {
+      onPay.mutate(parseFloat(paymentAmount));
+      setPaymentAmount('');
+    }
+  };
+
+  return (
+    <div className="p-4 border border-yellow-300 rounded-md bg-yellow-50">
+      <h3 className="font-medium mb-3">Pay Debt</h3>
+      <div className="space-y-3">
+        <div>
+          <label className="block text-sm font-medium mb-1">Payment Amount (EUR)</label>
+          <input
+            type="number"
+            step="0.01"
+            value={paymentAmount}
+            onChange={(e) => setPaymentAmount(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md"
+            placeholder={`Максимум: ${parseFloat(deal.client_debt_amount || '0').toLocaleString()} EUR`}
+            max={parseFloat(deal.client_debt_amount || '0')}
+          />
+        </div>
+        <button
+          onClick={handleSubmit}
+          disabled={onPay.isPending || !paymentAmount || parseFloat(paymentAmount) <= 0}
+          className="px-4 py-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 disabled:opacity-50"
+        >
+          {onPay.isPending ? 'Paying...' : 'Pay Debt'}
+        </button>
       </div>
     </div>
   );

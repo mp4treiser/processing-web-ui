@@ -23,14 +23,14 @@ class DealUpdate(BaseModel):
     gross_margin_usdt: Decimal | None = None
     net_profit_usdt: Decimal | None = None
     partner_share_usdt: Decimal | None = None
-    status: DealStatus | None = None
+    status: str | None = None  # Теперь строка, а не enum
     director_comment: str | None = None
 
 
 class DealResponse(DealBase):
     id: int
     manager_id: int
-    status: DealStatus
+    status: str  # Теперь строка, а не enum (хранится как "senior_manager_approved" и т.д.)
     total_usdt_calculated: Decimal | None = None
     effective_rate: Decimal | None = None
     total_cost_usdt: Decimal | None = None
@@ -40,6 +40,14 @@ class DealResponse(DealBase):
     director_comment: str | None = None
     approved_at: datetime | None = None
     approved_by: int | None = None
+    # Новые поля для главного менеджера и задолженностей
+    senior_manager_id: int | None = None
+    senior_manager_comment: str | None = None
+    approved_by_senior_manager_at: datetime | None = None
+    client_debt_amount: Decimal | None = None
+    client_paid_amount: Decimal | None = None
+    is_client_debt: str | None = None
+    client_payment_confirmed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     transactions: List[TransactionResponse] = []
@@ -54,9 +62,13 @@ class DealListResponse(BaseModel):
     client_name: str | None = None
     total_eur_request: Decimal
     total_usdt_calculated: Decimal | None = None
-    status: DealStatus
+    status: str  # Теперь строка, а не enum
     created_at: datetime
     progress: dict | None = None  # {"paid": 2, "total": 4}
+    transactions_count: int | None = None
+    paid_transactions_count: int | None = None
+    client_debt_amount: Decimal | None = None
+    client_paid_amount: Decimal | None = None  # Добавлено для отображения оплаченной суммы
 
     class Config:
         from_attributes = True

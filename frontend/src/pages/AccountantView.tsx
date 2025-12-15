@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { useState, useRef, useMemo } from 'react';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
 
 interface Deal {
   id: number;
@@ -16,6 +17,7 @@ interface Deal {
   status: string;
   created_at: string;
   transactions: Transaction[];
+  client_debt_amount: string | null;
 }
 
 interface Transaction {
@@ -38,34 +40,83 @@ interface Transaction {
 export function AccountantView() {
   const queryClient = useQueryClient();
   const [selectedDeal, setSelectedDeal] = useState<number | null>(null);
-  const [marketRate, setMarketRate] = useState<string>('1.1655');
-  const [transactionValues, setTransactionValues] = useState<Record<number, any>>({});
-  const initializedDealId = useRef<number | null>(null);
   const [viewMode, setViewMode] = useState<'calculation' | 'execution'>('calculation');
 
   // Фильтры/сортировка для общего списка сделок
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'date' | 'amount'>('date');
   const [sortDirection, setSortDirection] = useState<'desc' | 'asc'>('desc');
+  const [clientFilter, setClientFilter] = useState<string>('all');
+  const [companyFilter, setCompanyFilter] = useState<string>('');
+  const [accountFilter, setAccountFilter] = useState<string>('');
+
+  // Загружаем клиентов для фильтра
+  const { data: clients } = useQuery({
+    queryKey: ['reference-clients'],
+    queryFn: async () => {
+      const response = await api.get('/api/reference/clients');
+      return response.data;
+    },
+  });
 
   // Очереди (расчет / исполнение) — как раньше
-  const { data: dealsQueue, isLoading } = useQuery<Deal[]>({
-    queryKey: ['deals', 'accountant', viewMode],
+  // В новом workflow бухгалтер не выбирает маршруты (это делает главный менеджер)
+  // Поэтому calculation_pending больше не используется, только execution
+  // Для "Approved Deals" показываем сделки, одобренные главным менеджером (включая частично оплаченные)
+  const { data: allDealsForFiltering } = useQuery<Deal[]>({
+    queryKey: ['deals', 'accountant', 'all-for-filtering', clientFilter, companyFilter, accountFilter],
     queryFn: async () => {
-      const statusFilter = viewMode === 'calculation' ? 'calculation_pending' : 'execution';
-      const response = await api.get(`/api/deals?status_filter=${statusFilter}`);
+      const params: any = {};
+      if (clientFilter !== 'all') {
+        params.client_id = parseInt(clientFilter);
+      }
+      if (companyFilter) {
+        params.company_name = companyFilter;
+      }
+      if (accountFilter) {
+        params.account_number = accountFilter;
+      }
+      const response = await api.get('/api/deals', { params });
       return response.data;
     },
   });
 
-  // Общий список всех сделок бухгалтера (все статусы)
-  const { data: allDeals } = useQuery<Deal[]>({
-    queryKey: ['deals', 'accountant', 'all'],
+  const dealsQueue = allDealsForFiltering?.filter((deal) => {
+    if (viewMode === 'calculation') {
+      // Approved Deals - сделки, одобренные главным менеджером, но клиент еще НЕ оплатил
+      // Показываем одобренные сделки, которые еще не оплачены (не в execution и не частично оплачены)
+      return deal.status === 'senior_manager_approved' || 
+             deal.status === 'client_agreed_to_pay' ||
+             deal.status === 'awaiting_client_payment';
+    } else {
+      // Execution Queue - сделки, которые оплачены (полностью или частично) и их нужно провести
+      return deal.status === 'execution' || 
+             deal.status === 'client_partially_paid'; // Частично оплачено, можно проводить транзакции
+    }
+  });
+
+  const isLoading = !allDealsForFiltering; // Используем данные из allDealsForFiltering
+
+  // Получаем остатки по счетам для проведения транзакций
+  const { data: accountBalances } = useQuery({
+    queryKey: ['account-balances'],
     queryFn: async () => {
-      const response = await api.get('/api/deals');
+      const response = await api.get('/api/account-balances');
       return response.data;
     },
   });
+
+  // Получаем задолженности клиентов
+  const { data: clientDebts } = useQuery<Deal[]>({
+    queryKey: ['client-debts'],
+    queryFn: async () => {
+      const response = await api.get('/api/accountant/client-debts');
+      return response.data;
+    },
+  });
+
+  // Общий список всех сделок бухгалтера (все статусы) - используем те же данные
+  const allDeals = allDealsForFiltering;
 
   const { data: dealDetail } = useQuery<Deal>({
     queryKey: ['deal', selectedDeal],
@@ -76,133 +127,41 @@ export function AccountantView() {
     enabled: !!selectedDeal,
   });
 
-  // Инициализируем значения транзакций через useMemo, чтобы избежать циклов
-  useMemo(() => {
-    const currentDealId = dealDetail?.id;
-    
-    if (currentDealId && viewMode === 'calculation' && initializedDealId.current !== currentDealId && dealDetail?.transactions) {
-      const values: Record<number, any> = {};
-      dealDetail.transactions.forEach((trans) => {
-        values[trans.id] = {
-          route_type: trans.route_type || '',
-          exchange_rate: trans.exchange_rate || marketRate,
-          partner_bonus_rate: trans.partner_bonus_rate || '0.6',
-          partner_cost_rate: trans.partner_cost_rate || '0.3',
-          exchange_fee_percent: trans.exchange_fee_percent || '0.3',
-          intermediary_fee_percent: trans.intermediary_fee_percent || '0.1',
-          bank_fee_fix_eur: trans.bank_fee_fix_eur || '30',
-          bank_fee_percent: trans.bank_fee_percent || '0.3',
-        };
-      });
-      initializedDealId.current = currentDealId;
-      // Используем setTimeout, чтобы отложить setState до следующего тика
-      setTimeout(() => setTransactionValues(values), 0);
-    } else if ((!currentDealId || viewMode !== 'calculation') && initializedDealId.current !== null) {
-      initializedDealId.current = null;
-      setTimeout(() => setTransactionValues({}), 0);
-    }
-  }, [dealDetail?.id, dealDetail?.transactions, viewMode, marketRate]);
 
-
-  const updateTransactionMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: number; data: any }) => {
-      await api.put(`/api/transactions/${id}`, data);
-    },
-    onSuccess: () => {
-      // Не инвалидируем сразу, чтобы избежать циклов
-      // Инвалидация произойдет после calculateAllMutation
-    },
-  });
-
-  const calculateAllMutation = useMutation({
-    mutationFn: async () => {
-      if (!selectedDeal) return;
-      await api.post(`/api/transactions/deal/${selectedDeal}/calculate-all?market_rate=${marketRate}`);
-    },
-    onSuccess: () => {
-      // Инвалидируем только после успешного расчета
-      if (selectedDeal) {
-        queryClient.invalidateQueries({ queryKey: ['deal', selectedDeal] });
-        queryClient.invalidateQueries({ queryKey: ['deals'] });
-      }
-    },
-  });
-
-  const submitForApprovalMutation = useMutation({
-    mutationFn: async () => {
-      await api.post(`/api/accountant/${selectedDeal}/submit-for-approval`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['deals'] });
-      setSelectedDeal(null);
-    },
-  });
-
-  const markPaidMutation = useMutation({
-    mutationFn: async (transactionId: number) => {
-      await api.post(`/api/transactions/${transactionId}/mark-paid`);
+  const executeTransactionMutation = useMutation({
+    mutationFn: async ({ transactionId, accountBalanceId }: { transactionId: number; accountBalanceId: number }) => {
+      const response = await api.post(`/api/transactions/${transactionId}/execute?account_balance_id=${accountBalanceId}`);
+      return response.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['deal', selectedDeal] });
       queryClient.invalidateQueries({ queryKey: ['deals', 'accountant'] });
+      queryClient.invalidateQueries({ queryKey: ['account-balances'] });
     },
   });
 
-  const handleTransactionChange = (transId: number, field: string, value: any) => {
-    // Обновляем локальное состояние
-    const newValues = { ...transactionValues };
-    if (!newValues[transId]) {
-      newValues[transId] = {};
-    }
-    newValues[transId][field] = value;
-    setTransactionValues(newValues);
-
-    // Обновляем транзакцию на сервере
-    updateTransactionMutation.mutate({
-      id: transId,
-      data: { [field]: value },
-    });
-
-    // Автоматически пересчитываем после небольшой задержки (debounce)
-    if (selectedDeal && (field === 'route_type' || field.includes('fee') || field.includes('rate'))) {
-      setTimeout(() => {
-        if (selectedDeal) {
-          calculateAllMutation.mutate();
-        }
-      }, 800);
-    }
-  };
-
-  const handleMarketRateChange = (value: string) => {
-    setMarketRate(value);
-    // Обновляем exchange_rate для всех транзакций
-    if (dealDetail?.transactions) {
-      dealDetail.transactions.forEach((trans) => {
-        if (trans.route_type) {
-          updateTransactionMutation.mutate({
-            id: trans.id,
-            data: { exchange_rate: value },
-          });
-        }
-      });
-      // Пересчитываем после обновления курса
-      setTimeout(() => {
-        if (selectedDeal) {
-          calculateAllMutation.mutate();
-        }
-      }, 500);
-    }
-  };
 
   if (isLoading) {
     return <div className="text-center py-8">Loading...</div>;
   }
 
   return (
-    <div className="px-4 py-6">
+      <div className="px-4 py-6">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Accountant</h1>
         <div className="flex space-x-2">
+          <Link
+            to="/deals/new"
+            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+          >
+            + Create Deal
+          </Link>
+          <Link
+            to="/debts"
+            className="px-4 py-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700"
+          >
+            Debts ({clientDebts?.length || 0})
+          </Link>
           <button
             onClick={() => {
               setViewMode('calculation');
@@ -214,7 +173,7 @@ export function AccountantView() {
                 : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
             }`}
           >
-            Calculation Queue
+            Approved Deals
           </button>
           <button
             onClick={() => {
@@ -237,7 +196,7 @@ export function AccountantView() {
           {/* Очереди расчета / исполнения */}
           <div className="bg-white shadow rounded-lg p-4">
             <h2 className="text-lg font-semibold mb-4">
-              {viewMode === 'calculation' ? 'Pending Calculations' : 'Pending Execution'}
+              {viewMode === 'calculation' ? 'Approved Deals' : 'Execution Queue'}
             </h2>
             <div className="space-y-2">
               {dealsQueue?.map((deal) => (
@@ -259,7 +218,7 @@ export function AccountantView() {
               ))}
               {(!dealsQueue || dealsQueue.length === 0) && (
                 <p className="text-sm text-gray-500">
-                  {viewMode === 'calculation' ? 'No pending calculations' : 'No pending executions'}
+                  {viewMode === 'calculation' ? 'No approved deals' : 'No deals in execution'}
                 </p>
               )}
             </div>
@@ -270,24 +229,61 @@ export function AccountantView() {
             <h2 className="text-lg font-semibold mb-4">All Deals</h2>
 
             {/* Фильтры */}
-            <div className="flex flex-col space-y-3 mb  -4">
-              <div className="flex space-x-2">
+            <div className="flex flex-col space-y-3 mb-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                 <select
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
-                  className="w-1/2 px-2 py-1 border border-gray-300 rounded-md text-sm"
+                  className="px-2 py-1 border border-gray-300 rounded-md text-sm"
                 >
                   <option value="all">All statuses</option>
                   <option value="new">New</option>
-                  <option value="calculation_pending">Calculation pending</option>
-                  <option value="director_approval_pending">Director approval</option>
-                  <option value="director_rejected">Director rejected</option>
-                  <option value="client_approval">Client approval</option>
-                  <option value="awaiting_payment">Awaiting payment</option>
+                  <option value="senior_manager_review">Senior Manager Review</option>
+                  <option value="senior_manager_approved">Senior Manager Approved</option>
+                  <option value="senior_manager_rejected">Senior Manager Rejected</option>
+                  <option value="client_agreed_to_pay">Client Agreed to Pay</option>
+                  <option value="awaiting_client_payment">Awaiting Client Payment</option>
+                  <option value="client_partially_paid">Client Partially Paid</option>
                   <option value="execution">Execution</option>
                   <option value="completed">Completed</option>
+                  {/* Legacy statuses for backward compatibility */}
+                  <option value="calculation_pending">Calculation Pending (Legacy)</option>
+                  <option value="director_approval_pending">Director Approval Pending (Legacy)</option>
+                  <option value="director_rejected">Director Rejected (Legacy)</option>
+                  <option value="client_approval">Client Approval (Legacy)</option>
+                  <option value="awaiting_payment">Awaiting Payment (Legacy)</option>
                 </select>
 
+                <select
+                  value={clientFilter}
+                  onChange={(e) => setClientFilter(e.target.value)}
+                  className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+                >
+                  <option value="all">All Clients</option>
+                  {clients?.map((client: any) => (
+                    <option key={client.id} value={client.id}>
+                      {client.name}
+                    </option>
+                  ))}
+                </select>
+
+                <input
+                  type="text"
+                  value={companyFilter}
+                  onChange={(e) => setCompanyFilter(e.target.value)}
+                  placeholder="Search by company..."
+                  className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+                />
+
+                <input
+                  type="text"
+                  value={accountFilter}
+                  onChange={(e) => setAccountFilter(e.target.value)}
+                  placeholder="Search by IBAN..."
+                  className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div className="flex space-x-2">
                 <select
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value as 'date' | 'amount')}
@@ -373,241 +369,7 @@ export function AccountantView() {
           {selectedDeal && dealDetail ? (
             <div className="space-y-6">
               {viewMode === 'calculation' ? (
-                <>
-                  <div className="bg-white shadow rounded-lg p-6">
-                    <div className="mb-6">
-                      <h2 className="text-xl font-bold">Deal #{dealDetail.id}</h2>
-                      <p className="text-gray-600">{dealDetail.client_name}</p>
-                      <p className="text-gray-600">
-                        Total: {parseFloat(dealDetail.total_eur_request).toLocaleString()} EUR
-                      </p>
-                    </div>
-
-                    <div className="mb-4">
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Market Rate (USDT/EUR) *
-                      </label>
-                      <input
-                        type="number"
-                        step="0.0001"
-                        value={marketRate}
-                        onChange={(e) => handleMarketRateChange(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                      />
-                    </div>
-
-                    <div className="space-y-4">
-                      {dealDetail.transactions?.map((trans) => {
-                        const values = transactionValues[trans.id] || {};
-                        return (
-                          <div key={trans.id} className="border border-gray-200 rounded-md p-4">
-                            <div className="mb-3">
-                              <p className="font-medium">{trans.target_company}</p>
-                              <p className="text-sm text-gray-600">
-                                {parseFloat(trans.amount_eur).toLocaleString()} EUR
-                              </p>
-                              <p className="text-xs text-gray-500 mt-1">
-                                IBAN: {trans.recipient_details || 'Not provided'}
-                              </p>
-                            </div>
-                            
-                            <div className="grid grid-cols-2 gap-4 mb-3">
-                              <div>
-                                <label className="block text-xs text-gray-500 mb-1">Route Type *</label>
-                                <select
-                                  value={values.route_type || ''}
-                                  onChange={(e) => handleTransactionChange(trans.id, 'route_type', e.target.value)}
-                                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-                                >
-                                  <option value="">Select route</option>
-                                  <option value="exchange">Exchange</option>
-                                  <option value="supply_partner">Supply Partner</option>
-                                  <option value="direct_payment">Direct Payment</option>
-                                  <option value="split_50_50">Split 50/50</option>
-                                </select>
-                              </div>
-                              <div>
-                                <label className="block text-xs text-gray-500 mb-1">Cost USDT</label>
-                                <input
-                                  type="text"
-                                  value={trans.cost_usdt ? parseFloat(trans.cost_usdt).toFixed(2) : ''}
-                                  disabled
-                                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm bg-gray-50"
-                                />
-                              </div>
-                            </div>
-
-                            {/* Поля в зависимости от типа роута */}
-                            {values.route_type === 'exchange' && (
-                              <div className="grid grid-cols-3 gap-3 mt-3">
-                                <div>
-                                  <label className="block text-xs text-gray-500 mb-1">Exchange Fee %</label>
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    value={values.exchange_fee_percent || ''}
-                                    onChange={(e) => handleTransactionChange(trans.id, 'exchange_fee_percent', e.target.value)}
-                                    className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-xs text-gray-500 mb-1">Intermediary Fee %</label>
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    value={values.intermediary_fee_percent || ''}
-                                    onChange={(e) => handleTransactionChange(trans.id, 'intermediary_fee_percent', e.target.value)}
-                                    className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-xs text-gray-500 mb-1">Bank Fee (EUR)</label>
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    value={values.bank_fee_fix_eur || ''}
-                                    onChange={(e) => handleTransactionChange(trans.id, 'bank_fee_fix_eur', e.target.value)}
-                                    className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
-                                  />
-                                </div>
-                              </div>
-                            )}
-
-                            {values.route_type === 'supply_partner' && (
-                              <div className="grid grid-cols-2 gap-3 mt-3">
-                                <div>
-                                  <label className="block text-xs text-gray-500 mb-1">Partner Bonus %</label>
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    value={values.partner_bonus_rate || ''}
-                                    onChange={(e) => handleTransactionChange(trans.id, 'partner_bonus_rate', e.target.value)}
-                                    className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-xs text-gray-500 mb-1">Bank Fee %</label>
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    value={values.bank_fee_percent || ''}
-                                    onChange={(e) => handleTransactionChange(trans.id, 'bank_fee_percent', e.target.value)}
-                                    className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
-                                  />
-                                </div>
-                              </div>
-                            )}
-
-                            {values.route_type === 'direct_payment' && (
-                              <div className="mt-3">
-                                <label className="block text-xs text-gray-500 mb-1">Partner Bonus %</label>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  value={values.partner_bonus_rate || ''}
-                                  onChange={(e) => handleTransactionChange(trans.id, 'partner_bonus_rate', e.target.value)}
-                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
-                                />
-                              </div>
-                            )}
-
-                            {values.route_type === 'split_50_50' && (
-                              <div className="mt-3">
-                                <label className="block text-xs text-gray-500 mb-1">Partner Cost %</label>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  value={values.partner_cost_rate || ''}
-                                  onChange={(e) => handleTransactionChange(trans.id, 'partner_cost_rate', e.target.value)}
-                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
-                                />
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Итоговая панель */}
-                  {dealDetail.total_usdt_calculated && (
-                    <div className="bg-white shadow rounded-lg p-6">
-                      <h3 className="text-lg font-semibold mb-4">Calculation Results</h3>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-gray-50 p-4 rounded-md">
-                          <p className="text-sm text-gray-500">Total USDT (Client)</p>
-                          <p className="text-xl font-bold text-green-600">
-                            {typeof dealDetail.total_usdt_calculated === 'string'
-                              ? parseFloat(dealDetail.total_usdt_calculated).toLocaleString()
-                              : Number(dealDetail.total_usdt_calculated).toLocaleString()} USDT
-                          </p>
-                        </div>
-                        <div className="bg-gray-50 p-4 rounded-md">
-                          <p className="text-sm text-gray-500">Total Cost</p>
-                          <p className="text-xl font-bold">
-                            {dealDetail.total_cost_usdt
-                              ? (typeof dealDetail.total_cost_usdt === 'string'
-                                  ? parseFloat(dealDetail.total_cost_usdt).toLocaleString()
-                                  : Number(dealDetail.total_cost_usdt).toLocaleString())
-                              : 'N/A'} USDT
-                          </p>
-                        </div>
-                        <div className="bg-gray-50 p-4 rounded-md">
-                          <p className="text-sm text-gray-500">Gross Margin</p>
-                          <p className="text-xl font-bold">
-                            {dealDetail.gross_margin_usdt
-                              ? (typeof dealDetail.gross_margin_usdt === 'string'
-                                  ? parseFloat(dealDetail.gross_margin_usdt).toLocaleString()
-                                  : Number(dealDetail.gross_margin_usdt).toLocaleString())
-                              : 'N/A'} USDT
-                          </p>
-                        </div>
-                        <div className="bg-gray-50 p-4 rounded-md">
-                          <p className="text-sm text-gray-500">Net Profit</p>
-                          <p className="text-xl font-bold text-green-600">
-                            {dealDetail.net_profit_usdt
-                              ? (typeof dealDetail.net_profit_usdt === 'string'
-                                  ? parseFloat(dealDetail.net_profit_usdt).toLocaleString()
-                                  : Number(dealDetail.net_profit_usdt).toLocaleString())
-                              : 'N/A'} USDT
-                          </p>
-                        </div>
-                        {dealDetail.partner_share_usdt && parseFloat(dealDetail.partner_share_usdt) > 0 && (
-                          <div className="bg-gray-50 p-4 rounded-md">
-                            <p className="text-sm text-gray-500">Partner Share</p>
-                            <p className="text-xl font-bold text-orange-600">
-                              {typeof dealDetail.partner_share_usdt === 'string'
-                                ? parseFloat(dealDetail.partner_share_usdt).toLocaleString()
-                                : Number(dealDetail.partner_share_usdt).toLocaleString()} USDT
-                            </p>
-                          </div>
-                        )}
-                        {dealDetail.effective_rate && (
-                          <div className="bg-gray-50 p-4 rounded-md">
-                            <p className="text-sm text-gray-500">Effective Rate</p>
-                            <p className="text-xl font-bold">
-                              {typeof dealDetail.effective_rate === 'string'
-                                ? parseFloat(dealDetail.effective_rate).toFixed(6)
-                                : Number(dealDetail.effective_rate).toFixed(6)}
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex justify-end">
-                    <button
-                      onClick={() => submitForApprovalMutation.mutate()}
-                      disabled={submitForApprovalMutation.isPending || !dealDetail.total_usdt_calculated}
-                      className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
-                    >
-                      {submitForApprovalMutation.isPending ? 'Submitting...' : 'Submit for Director Approval'}
-                    </button>
-                  </div>
-                </>
-              ) : (
-                /* Execution mode - подтверждение транзакций */
+                /* Просмотр сделок, одобренных главным менеджером (маршруты уже выбраны) */
                 <div className="bg-white shadow rounded-lg p-6">
                   <div className="mb-6">
                     <h2 className="text-xl font-bold">Deal #{dealDetail.id}</h2>
@@ -615,51 +377,98 @@ export function AccountantView() {
                     <p className="text-gray-600">
                       Total: {parseFloat(dealDetail.total_eur_request).toLocaleString()} EUR
                     </p>
+                    {dealDetail.client_debt_amount && parseFloat(dealDetail.client_debt_amount) > 0 && (
+                      <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded">
+                        <p className="text-sm text-yellow-800">
+                          ⚠️ Client Debt: {parseFloat(dealDetail.client_debt_amount).toLocaleString()} EUR
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-4">
+                    <p className="text-sm text-gray-600 mb-4">
+                      Routes have been selected by the senior manager. You can execute transactions even if client has debt.
+                    </p>
+                    {dealDetail.transactions?.map((trans) => (
+                      <TransactionExecutionItem
+                        key={trans.id}
+                        transaction={trans}
+                        accountBalances={accountBalances}
+                        onExecute={executeTransactionMutation.mutate}
+                        isExecuting={executeTransactionMutation.isPending}
+                        dealStatus={dealDetail.status}
+                      />
+                    ))}
+                  </div>
+
+                  {/* Итоговая панель */}
+                  {dealDetail.total_usdt_calculated && (
+                    <div className="mt-6 bg-gray-50 rounded-lg p-4">
+                      <h3 className="text-lg font-semibold mb-4">Calculation Results</h3>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-sm text-gray-500">Total USDT (Client)</p>
+                          <p className="text-xl font-bold text-green-600">
+                            {parseFloat(dealDetail.total_usdt_calculated).toLocaleString()} USDT
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-500">Total Cost</p>
+                          <p className="text-xl font-bold">
+                            {dealDetail.total_cost_usdt
+                              ? parseFloat(dealDetail.total_cost_usdt).toLocaleString()
+                              : 'N/A'} USDT
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-500">Gross Margin</p>
+                          <p className="text-xl font-bold">
+                            {dealDetail.gross_margin_usdt
+                              ? parseFloat(dealDetail.gross_margin_usdt).toLocaleString()
+                              : 'N/A'} USDT
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-500">Net Profit</p>
+                          <p className="text-xl font-bold text-green-600">
+                            {dealDetail.net_profit_usdt
+                              ? parseFloat(dealDetail.net_profit_usdt).toLocaleString()
+                              : 'N/A'} USDT
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Execution mode - проведение транзакций с остатками */
+                <div className="bg-white shadow rounded-lg p-6">
+                  <div className="mb-6">
+                    <h2 className="text-xl font-bold">Deal #{dealDetail.id}</h2>
+                    <p className="text-gray-600">{dealDetail.client_name}</p>
+                    <p className="text-gray-600">
+                      Total: {parseFloat(dealDetail.total_eur_request).toLocaleString()} EUR
+                    </p>
+                    {dealDetail.client_debt_amount && parseFloat(dealDetail.client_debt_amount) > 0 && (
+                      <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded">
+                        <p className="text-sm text-yellow-800">
+                          ⚠️ Client Debt: {parseFloat(dealDetail.client_debt_amount).toLocaleString()} EUR
+                        </p>
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-4">
                     {dealDetail.transactions?.map((trans) => (
-                      <div
+                      <TransactionExecutionItem
                         key={trans.id}
-                        className={`border rounded-md p-4 ${
-                          trans.status === 'paid'
-                            ? 'border-green-500 bg-green-50'
-                            : 'border-gray-200'
-                        }`}
-                      >
-                        <div className="flex justify-between items-start">
-                          <div className="flex-1">
-                            <p className="font-medium">{trans.target_company}</p>
-                            <p className="text-sm text-gray-600">
-                              {parseFloat(trans.amount_eur).toLocaleString()} EUR
-                            </p>
-                            <p className="text-xs text-gray-500 mt-1">
-                              IBAN: {trans.recipient_details || 'Not provided'}
-                            </p>
-                            <p className="text-xs text-gray-500">
-                              Route: {trans.route_type || 'Not set'}
-                            </p>
-                            <p className="text-xs text-gray-500">
-                              Cost: {trans.cost_usdt ? parseFloat(trans.cost_usdt).toFixed(2) : 'N/A'} USDT
-                            </p>
-                          </div>
-                          <div className="ml-4">
-                            {trans.status === 'paid' ? (
-                              <span className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm font-medium">
-                                Paid
-                              </span>
-                            ) : (
-                              <button
-                                onClick={() => markPaidMutation.mutate(trans.id)}
-                                disabled={markPaidMutation.isPending}
-                                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
-                              >
-                                {markPaidMutation.isPending ? 'Confirming...' : 'Mark as Paid'}
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
+                        transaction={trans}
+                        accountBalances={accountBalances}
+                        onExecute={executeTransactionMutation.mutate}
+                        isExecuting={executeTransactionMutation.isPending}
+                        dealStatus={dealDetail.status}
+                      />
                     ))}
                   </div>
                 </div>
@@ -668,6 +477,92 @@ export function AccountantView() {
           ) : (
             <div className="bg-white shadow rounded-lg p-6 text-center text-gray-500">
               Select a deal to start calculation
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Компонент для проведения транзакции
+function TransactionExecutionItem({ transaction, accountBalances, onExecute, isExecuting, dealStatus }: {
+  transaction: Transaction;
+  accountBalances: any[];
+  onExecute: (data: { transactionId: number; accountBalanceId: number }) => void;
+  isExecuting: boolean;
+  dealStatus: string;
+}) {
+  const [selectedBalanceId, setSelectedBalanceId] = useState<number | null>(null);
+
+  // Проверяем, можно ли выполнить транзакцию
+  // Транзакции можно выполнять только если менеджер подтвердил оплату от клиента
+  // Разрешенные статусы: execution (полная оплата) или client_partially_paid (частичная оплата)
+  const canExecute = dealStatus === 'execution' || dealStatus === 'client_partially_paid';
+  
+  return (
+    <div
+      className={`border rounded-md p-4 ${
+        transaction.status === 'paid'
+          ? 'border-green-500 bg-green-50'
+          : 'border-gray-200'
+      }`}
+    >
+      <div className="flex justify-between items-start">
+        <div className="flex-1">
+          <p className="font-medium">{transaction.target_company}</p>
+          <p className="text-sm text-gray-600">
+            {parseFloat(transaction.amount_eur).toLocaleString()} EUR
+          </p>
+          <p className="text-xs text-gray-500 mt-1">
+            IBAN: {transaction.recipient_details || 'Not provided'}
+          </p>
+          <p className="text-xs text-gray-500">
+            Route: {transaction.route_type || 'Not set'}
+          </p>
+          <p className="text-xs text-gray-500">
+            Cost: {transaction.cost_usdt ? parseFloat(transaction.cost_usdt).toFixed(2) : 'N/A'} USDT
+          </p>
+        </div>
+        <div className="ml-4">
+          {transaction.status === 'paid' ? (
+            <span className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm font-medium">
+              Paid
+            </span>
+          ) : !canExecute ? (
+            <div className="space-y-2 min-w-[200px]">
+              <div className="px-3 py-2 bg-yellow-50 border border-yellow-200 rounded-md text-sm text-yellow-800">
+                ⚠️ Waiting for manager to confirm client payment
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2 min-w-[200px]">
+              <select
+                value={selectedBalanceId || ''}
+                onChange={(e) => setSelectedBalanceId(parseInt(e.target.value))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+              >
+                <option value="">Select Balance</option>
+                {accountBalances?.map((balance: any) => (
+                  <option key={balance.id} value={balance.id}>
+                    {balance.account_name} - {parseFloat(balance.balance).toLocaleString(undefined, { maximumFractionDigits: 10 })} {balance.currency || ''}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => {
+                  if (selectedBalanceId) {
+                    onExecute({
+                      transactionId: transaction.id,
+                      accountBalanceId: selectedBalanceId,
+                    });
+                  }
+                }}
+                disabled={isExecuting || !selectedBalanceId}
+                className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+              >
+                {isExecuting ? 'Executing...' : 'Execute Transaction'}
+              </button>
             </div>
           )}
         </div>

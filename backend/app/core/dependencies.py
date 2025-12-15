@@ -7,6 +7,9 @@ from app.models.user import User, UserRole
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
 
+# Импортируем require_permission из permissions.py для обратной совместимости
+from app.core.permissions import require_permission
+
 
 def get_current_user(
     token: str = Depends(oauth2_scheme),

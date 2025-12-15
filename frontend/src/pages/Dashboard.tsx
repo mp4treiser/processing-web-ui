@@ -34,17 +34,36 @@ export function Dashboard() {
   const [sortDirection, setSortDirection] = useState<'desc' | 'asc'>('desc');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
+  const [clientFilter, setClientFilter] = useState<string>('all');
+  const [companyFilter, setCompanyFilter] = useState<string>('');
+  const [accountFilter, setAccountFilter] = useState<string>('');
+
+  // Загружаем клиентов для фильтра
+  const { data: clients } = useQuery({
+    queryKey: ['reference-clients'],
+    queryFn: async () => {
+      const response = await api.get('/api/reference/clients');
+      return response.data;
+    },
+  });
 
   const { data: deals, isLoading } = useQuery<Deal[]>({
-    queryKey: ['deals'],
+    queryKey: ['deals', clientFilter, companyFilter, accountFilter],
     queryFn: async () => {
-      // Бэкенд уже сортирует по дате (последние сверху) и ограничивает выборку.
-      const response = await api.get('/api/deals', {
-        params: {
-          limit: 100,
-          offset: 0,
-        },
-      });
+      const params: any = {
+        limit: 100,
+        offset: 0,
+      };
+      if (clientFilter !== 'all') {
+        params.client_id = parseInt(clientFilter);
+      }
+      if (companyFilter) {
+        params.company_name = companyFilter;
+      }
+      if (accountFilter) {
+        params.account_number = accountFilter;
+      }
+      const response = await api.get('/api/deals', { params });
       return response.data;
     },
   });
@@ -56,10 +75,6 @@ export function Dashboard() {
   const filteredDeals = (deals || [])
     .filter((deal) => {
       if (statusFilter !== 'all') {
-        if (user?.role === 'manager') {
-          // Для менеджера оставляем текущую логику статусов (упрощённо)
-          return true;
-        }
         return deal.status === statusFilter;
       }
       return true;
@@ -97,6 +112,126 @@ export function Dashboard() {
 
       {user?.role === 'manager' && (
         <div className="mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex gap-3">
+              <Link
+                to="/deals/new"
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700"
+              >
+                + New Deal
+              </Link>
+              <Link
+                to="/debts"
+                className="inline-flex items-center px-4 py-2 border border-red-300 text-sm font-medium rounded-md shadow-sm text-red-700 bg-red-50 hover:bg-red-100"
+              >
+                ⚠️ View Debts
+              </Link>
+            </div>
+          </div>
+          <div className="bg-white shadow rounded-md p-4">
+            <h2 className="text-md font-semibold mb-3">Filters</h2>
+            <div className="flex flex-wrap gap-3 items-end">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Status</label>
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+                >
+                  <option value="all">All</option>
+                  <option value="new">New</option>
+                  <option value="senior_manager_review">Senior Manager Review</option>
+                  <option value="senior_manager_approved">Senior Manager Approved</option>
+                  <option value="senior_manager_rejected">Senior Manager Rejected</option>
+                  <option value="client_agreed_to_pay">Client Agreed to Pay</option>
+                  <option value="awaiting_client_payment">Awaiting Client Payment</option>
+                  <option value="client_partially_paid">Client Partially Paid</option>
+                  <option value="execution">Execution</option>
+                  <option value="completed">Completed</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Client</label>
+                <select
+                  value={clientFilter}
+                  onChange={(e) => setClientFilter(e.target.value)}
+                  className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+                >
+                  <option value="all">All Clients</option>
+                  {clients?.map((client: any) => (
+                    <option key={client.id} value={client.id}>
+                      {client.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Company</label>
+                <input
+                  type="text"
+                  value={companyFilter}
+                  onChange={(e) => setCompanyFilter(e.target.value)}
+                  placeholder="Search by company..."
+                  className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Account/IBAN</label>
+                <input
+                  type="text"
+                  value={accountFilter}
+                  onChange={(e) => setAccountFilter(e.target.value)}
+                  placeholder="Search by IBAN..."
+                  className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Date from</label>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Date to</label>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Sort</label>
+                <div className="flex space-x-2">
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as 'date' | 'amount')}
+                    className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+                  >
+                    <option value="date">By date</option>
+                    <option value="amount">By amount</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSortDirection((prev) => (prev === 'desc' ? 'asc' : 'desc'))
+                    }
+                    className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+                  >
+                    {sortDirection === 'desc' ? '↓' : '↑'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {user?.role === 'accountant' && (
+        <div className="mb-6">
           <Link
             to="/deals/new"
             className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700"
@@ -127,6 +262,41 @@ export function Dashboard() {
                 <option value="execution">Execution</option>
                 <option value="completed">Completed</option>
               </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Client</label>
+              <select
+                value={clientFilter}
+                onChange={(e) => setClientFilter(e.target.value)}
+                className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+              >
+                <option value="all">All Clients</option>
+                {clients?.map((client: any) => (
+                  <option key={client.id} value={client.id}>
+                    {client.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Company</label>
+              <input
+                type="text"
+                value={companyFilter}
+                onChange={(e) => setCompanyFilter(e.target.value)}
+                placeholder="Search by company..."
+                className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Account/IBAN</label>
+              <input
+                type="text"
+                value={accountFilter}
+                onChange={(e) => setAccountFilter(e.target.value)}
+                placeholder="Search by IBAN..."
+                className="px-2 py-1 border border-gray-300 rounded-md text-sm"
+              />
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">Date from</label>
