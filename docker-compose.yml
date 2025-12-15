@@ -26,9 +26,8 @@ services:
       SECRET_KEY: your-secret-key-change-in-production-docker
       ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: 1440
-      CORS_ORIGINS: '["http://localhost:3330","http://localhost:5173","http://frontend:80"]'
     ports:
-      - "3330:8000"
+      - "3421:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,10 +42,10 @@ services:
         echo 'Seeding database...' &&
         python scripts/seed_data.py || echo 'Seed data may already exist' &&
         echo 'Starting server...' &&
-        uvicorn app.main:app --host 0.0.0.0 --port 3330 --reload
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
       "
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3330/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -57,14 +56,14 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - VITE_API_URL=http://localhost:3330
+        - VITE_API_URL=
     container_name: deal_processing_frontend
     ports:
       - "3333:80"
     depends_on:
       - backend
     environment:
-      - VITE_API_URL=http://localhost:8000
+      - VITE_API_URL=
     volumes:
       - ./frontend:/app
       - /app/node_modules

@@ -17,10 +17,10 @@ app = FastAPI(
 # В production нужно указать конкретные origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Разрешаем все для разработки
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"],  # Разрешаем все origins
+    allow_credentials=False,  # Нельзя использовать True с allow_origins=["*"]
+    allow_methods=["*"],  # Разрешаем все методы
+    allow_headers=["*"],  # Разрешаем все заголовки
 )
 
 app.include_router(api_router)
