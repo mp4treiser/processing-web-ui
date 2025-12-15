@@ -74,37 +74,39 @@ def upgrade() -> None:
         """))
         return result.fetchone() is not None
     
-    # Добавить поля в таблицу deals (с проверкой существования)
-    if not column_exists('deals', 'senior_manager_id'):
-        op.add_column('deals', sa.Column('senior_manager_id', sa.Integer(), nullable=True))
-    if not column_exists('deals', 'senior_manager_comment'):
-        op.add_column('deals', sa.Column('senior_manager_comment', sa.Text(), nullable=True))
-    if not column_exists('deals', 'approved_by_senior_manager_at'):
-        op.add_column('deals', sa.Column('approved_by_senior_manager_at', sa.DateTime(), nullable=True))
-    if not column_exists('deals', 'client_debt_amount'):
-        op.add_column('deals', sa.Column('client_debt_amount', sa.Numeric(15, 2), server_default='0', nullable=False))
-    if not column_exists('deals', 'client_paid_amount'):
-        op.add_column('deals', sa.Column('client_paid_amount', sa.Numeric(15, 2), server_default='0', nullable=False))
-    if not column_exists('deals', 'is_client_debt'):
-        op.add_column('deals', sa.Column('is_client_debt', sa.String(), server_default='false', nullable=True))
-    if not column_exists('deals', 'client_payment_confirmed_at'):
-        op.add_column('deals', sa.Column('client_payment_confirmed_at', sa.DateTime(), nullable=True))
+    # Добавить поля в таблицу deals (с проверкой существования таблицы и колонок)
+    if table_exists('deals'):
+        if not column_exists('deals', 'senior_manager_id'):
+            op.add_column('deals', sa.Column('senior_manager_id', sa.Integer(), nullable=True))
+        if not column_exists('deals', 'senior_manager_comment'):
+            op.add_column('deals', sa.Column('senior_manager_comment', sa.Text(), nullable=True))
+        if not column_exists('deals', 'approved_by_senior_manager_at'):
+            op.add_column('deals', sa.Column('approved_by_senior_manager_at', sa.DateTime(), nullable=True))
+        if not column_exists('deals', 'client_debt_amount'):
+            op.add_column('deals', sa.Column('client_debt_amount', sa.Numeric(15, 2), server_default='0', nullable=False))
+        if not column_exists('deals', 'client_paid_amount'):
+            op.add_column('deals', sa.Column('client_paid_amount', sa.Numeric(15, 2), server_default='0', nullable=False))
+        if not column_exists('deals', 'is_client_debt'):
+            op.add_column('deals', sa.Column('is_client_debt', sa.String(), server_default='false', nullable=True))
+        if not column_exists('deals', 'client_payment_confirmed_at'):
+            op.add_column('deals', sa.Column('client_payment_confirmed_at', sa.DateTime(), nullable=True))
+        
+        if table_exists('users') and not fk_exists('fk_deals_senior_manager', 'deals'):
+            op.create_foreign_key('fk_deals_senior_manager', 'deals', 'users', ['senior_manager_id'], ['id'])
     
-    if not fk_exists('fk_deals_senior_manager', 'deals'):
-        op.create_foreign_key('fk_deals_senior_manager', 'deals', 'users', ['senior_manager_id'], ['id'])
-    
-    # Обновить таблицу clients (с проверкой существования)
-    if not column_exists('clients', 'created_by'):
-        op.add_column('clients', sa.Column('created_by', sa.Integer(), nullable=True))
-    if not column_exists('clients', 'is_active'):
-        op.add_column('clients', sa.Column('is_active', sa.Boolean(), server_default='true', nullable=False))
-    if not column_exists('clients', 'created_at'):
-        op.add_column('clients', sa.Column('created_at', sa.DateTime(), server_default=sa.func.now(), nullable=True))
-    if not column_exists('clients', 'updated_at'):
-        op.add_column('clients', sa.Column('updated_at', sa.DateTime(), server_default=sa.func.now(), onupdate=sa.func.now(), nullable=True))
-    
-    if not fk_exists('fk_clients_created_by', 'clients'):
-        op.create_foreign_key('fk_clients_created_by', 'clients', 'users', ['created_by'], ['id'])
+    # Обновить таблицу clients (с проверкой существования таблицы и колонок)
+    if table_exists('clients'):
+        if not column_exists('clients', 'created_by'):
+            op.add_column('clients', sa.Column('created_by', sa.Integer(), nullable=True))
+        if not column_exists('clients', 'is_active'):
+            op.add_column('clients', sa.Column('is_active', sa.Boolean(), server_default='true', nullable=False))
+        if not column_exists('clients', 'created_at'):
+            op.add_column('clients', sa.Column('created_at', sa.DateTime(), server_default=sa.func.now(), nullable=True))
+        if not column_exists('clients', 'updated_at'):
+            op.add_column('clients', sa.Column('updated_at', sa.DateTime(), server_default=sa.func.now(), onupdate=sa.func.now(), nullable=True))
+        
+        if table_exists('users') and not fk_exists('fk_clients_created_by', 'clients'):
+            op.create_foreign_key('fk_clients_created_by', 'clients', 'users', ['created_by'], ['id'])
     
     # Создать таблицу companies (с проверкой существования)
     if not table_exists('companies'):
@@ -120,9 +122,9 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint('id')
         )
         op.create_index(op.f('ix_companies_name'), 'companies', ['name'], unique=False)
-        if not fk_exists('fk_companies_client', 'companies'):
+        if table_exists('clients') and not fk_exists('fk_companies_client', 'companies'):
             op.create_foreign_key('fk_companies_client', 'companies', 'clients', ['client_id'], ['id'])
-        if not fk_exists('fk_companies_created_by', 'companies'):
+        if table_exists('users') and not fk_exists('fk_companies_created_by', 'companies'):
             op.create_foreign_key('fk_companies_created_by', 'companies', 'users', ['created_by'], ['id'])
     
     # Создать таблицу company_accounts (с проверкой существования)
@@ -138,7 +140,7 @@ def upgrade() -> None:
         sa.Column('updated_at', sa.DateTime(), server_default=sa.func.now(), onupdate=sa.func.now(), nullable=True),
         sa.PrimaryKeyConstraint('id')
         )
-        if not fk_exists('fk_company_accounts_company', 'company_accounts'):
+        if table_exists('companies') and not fk_exists('fk_company_accounts_company', 'company_accounts'):
             op.create_foreign_key('fk_company_accounts_company', 'company_accounts', 'companies', ['company_id'], ['id'])
     
     # Создать enum для BalanceChangeType
@@ -160,9 +162,9 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint('id')
         )
         op.create_index(op.f('ix_account_balances_account_name'), 'account_balances', ['account_name'], unique=False)
-        if not fk_exists('fk_account_balances_created_by', 'account_balances'):
+        if table_exists('users') and not fk_exists('fk_account_balances_created_by', 'account_balances'):
             op.create_foreign_key('fk_account_balances_created_by', 'account_balances', 'users', ['created_by'], ['id'])
-        if not fk_exists('fk_account_balances_updated_by', 'account_balances'):
+        if table_exists('users') and not fk_exists('fk_account_balances_updated_by', 'account_balances'):
             op.create_foreign_key('fk_account_balances_updated_by', 'account_balances', 'users', ['updated_by'], ['id'])
     
     # Создать таблицу account_balance_history (с проверкой существования)
@@ -183,11 +185,11 @@ def upgrade() -> None:
         )
         if not fk_exists('fk_account_balance_history_account', 'account_balance_history'):
             op.create_foreign_key('fk_account_balance_history_account', 'account_balance_history', 'account_balances', ['account_balance_id'], ['id'])
-        if not fk_exists('fk_account_balance_history_transaction', 'account_balance_history'):
+        if table_exists('transactions') and not fk_exists('fk_account_balance_history_transaction', 'account_balance_history'):
             op.create_foreign_key('fk_account_balance_history_transaction', 'account_balance_history', 'transactions', ['transaction_id'], ['id'])
-        if not fk_exists('fk_account_balance_history_deal', 'account_balance_history'):
+        if table_exists('deals') and not fk_exists('fk_account_balance_history_deal', 'account_balance_history'):
             op.create_foreign_key('fk_account_balance_history_deal', 'account_balance_history', 'deals', ['deal_id'], ['id'])
-        if not fk_exists('fk_account_balance_history_changed_by', 'account_balance_history'):
+        if table_exists('users') and not fk_exists('fk_account_balance_history_changed_by', 'account_balance_history'):
             op.create_foreign_key('fk_account_balance_history_changed_by', 'account_balance_history', 'users', ['changed_by'], ['id'])
 
 
