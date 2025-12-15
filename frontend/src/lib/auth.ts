@@ -17,7 +17,8 @@ export const authService = {
     formData.append('username', email);
     formData.append('password', password);
     
-    const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    const envApiUrl = import.meta.env.VITE_API_URL;
+    const baseUrl = envApiUrl && envApiUrl.trim() !== '' ? envApiUrl : '';
     const response = await fetch(`${baseUrl}/api/auth/login`, {
       method: 'POST',
       body: formData,
