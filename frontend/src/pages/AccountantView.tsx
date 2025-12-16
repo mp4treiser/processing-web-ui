@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { CompanyBalancesDisplay } from '../components/CompanyBalancesDisplay';
 
 interface Deal {
   id: number;
@@ -147,6 +148,9 @@ export function AccountantView() {
 
   return (
       <div className="px-4 py-6">
+      {/* Блок остатков компаний */}
+      <CompanyBalancesDisplay showProjected={true} />
+      
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Accountant</h1>
         <div className="flex space-x-2">

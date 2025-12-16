@@ -34,6 +34,11 @@ class Deal(Base):
     total_eur_request = Column(Numeric(15, 2), nullable=False)
     client_rate_percent = Column(Numeric(5, 2), default=1.0)  # Ставка на клиента %
     
+    # Валюты сделки (заполняет менеджер/бухгалтер)
+    client_sends_currency = Column(String, nullable=True)  # Какую валюту клиент отправляет (USDT, EUR и т.д.)
+    client_receives_currency = Column(String, nullable=True)  # Какую валюту клиент запрашивает (EUR, USD и т.д.)
+    deal_amount = Column(Numeric(15, 2), nullable=True)  # Сумма сделки, которую клиент запросил
+    
     # Расчетные поля (заполняет бухгалтер)
     total_usdt_calculated = Column(Numeric(15, 2), nullable=True)
     effective_rate = Column(Numeric(10, 6), nullable=True)

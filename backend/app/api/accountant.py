@@ -59,35 +59,69 @@ def create_deal_as_accountant(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("exchanges.deals.create"))
 ):
-    """Создать сделку бухгалтером (без апрувов главного менеджера)"""
-    # Проверяем сумму транзакций
-    total_transactions = sum(float(t.get("amount_eur", 0)) for t in deal_data.transactions)
-    if abs(total_transactions - float(deal_data.total_eur_request)) > 0.01:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Sum of transactions ({total_transactions}) does not match total ({deal_data.total_eur_request})"
-        )
-    
+    """Создать сделку бухгалтером с новым конструктором маршрутов"""
     # Создаем сделку - сразу в статусе EXECUTION (без апрувов)
     db_deal = Deal(
         client_id=deal_data.client_id,
         manager_id=current_user.id,  # Бухгалтер становится менеджером сделки
-        total_eur_request=deal_data.total_eur_request,
+        total_eur_request=deal_data.total_eur_request if deal_data.total_eur_request else (deal_data.deal_amount or Decimal("0")),
         client_rate_percent=deal_data.client_rate_percent,
+        deal_amount=deal_data.deal_amount,
+        client_sends_currency=deal_data.client_sends_currency,
+        client_receives_currency=deal_data.client_receives_currency,
         status=DealStatus.EXECUTION.value  # Сразу в исполнение
     )
     db.add(db_deal)
     db.flush()
     
-    # Создаем транзакции
+    # Создаем транзакции с новыми полями
     for trans_data in deal_data.transactions:
-        db_trans = Transaction(
-            deal_id=db_deal.id,
-            target_company=trans_data["target_company"],
-            amount_eur=trans_data["amount_eur"],
-            recipient_details=trans_data.get("recipient_details"),
-            status=TransactionStatus.PENDING
-        )
+        # Проверяем, это новая структура транзакции или старая
+        if "route_type" in trans_data:
+            # Новая структура с конструктором маршрутов
+            db_trans = Transaction(
+                deal_id=db_deal.id,
+                from_currency=trans_data.get("from_currency"),
+                to_currency=trans_data.get("to_currency"),
+                exchange_rate=Decimal(str(trans_data.get("exchange_rate", 0))),
+                client_company_id=trans_data.get("client_company_id"),
+                amount_for_client=Decimal(str(trans_data.get("amount_for_client", 0))),
+                route_type=trans_data.get("route_type"),
+                # Direct
+                internal_company_id=trans_data.get("internal_company_id"),
+                internal_company_account_id=trans_data.get("internal_company_account_id"),
+                amount_from_account=Decimal(str(trans_data.get("amount_from_account", 0))) if trans_data.get("amount_from_account") else None,
+                bank_commission_id=trans_data.get("bank_commission_id"),
+                # Exchange
+                crypto_account_id=trans_data.get("crypto_account_id"),
+                exchange_from_currency=trans_data.get("exchange_from_currency"),
+                exchange_to_currency=trans_data.get("exchange_to_currency"),
+                crypto_exchange_rate=Decimal(str(trans_data.get("crypto_exchange_rate", 0))) if trans_data.get("crypto_exchange_rate") else None,
+                agent_commission_id=trans_data.get("agent_commission_id"),
+                exchange_commission_id=trans_data.get("exchange_commission_id"),
+                exchange_bank_commission_id=trans_data.get("exchange_bank_commission_id"),
+                # Partner
+                partner_company_id=trans_data.get("partner_company_id"),
+                amount_to_partner_usdt=Decimal(str(trans_data.get("amount_to_partner_usdt", 0))) if trans_data.get("amount_to_partner_usdt") else None,
+                amount_partner_sends=Decimal(str(trans_data.get("amount_partner_sends", 0))) if trans_data.get("amount_partner_sends") else None,
+                partner_commission_id=trans_data.get("partner_commission_id"),
+                # Partner 50-50
+                partner_50_50_company_id=trans_data.get("partner_50_50_company_id"),
+                amount_to_partner_50_50_usdt=Decimal(str(trans_data.get("amount_to_partner_50_50_usdt", 0))) if trans_data.get("amount_to_partner_50_50_usdt") else None,
+                amount_partner_50_50_sends=Decimal(str(trans_data.get("amount_partner_50_50_sends", 0))) if trans_data.get("amount_partner_50_50_sends") else None,
+                partner_50_50_commission_id=trans_data.get("partner_50_50_commission_id"),
+                final_income=Decimal(str(trans_data.get("final_income", 0))) if trans_data.get("final_income") else None,
+                status=TransactionStatus.PENDING
+            )
+        else:
+            # Старая структура для обратной совместимости
+            db_trans = Transaction(
+                deal_id=db_deal.id,
+                target_company=trans_data.get("target_company", ""),
+                amount_eur=Decimal(str(trans_data.get("amount_eur", 0))),
+                recipient_details=trans_data.get("recipient_details"),
+                status=TransactionStatus.PENDING
+            )
         db.add(db_trans)
     
     db.commit()

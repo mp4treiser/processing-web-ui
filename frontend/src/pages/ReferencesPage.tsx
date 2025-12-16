@@ -28,7 +28,7 @@ interface CompanyAccount {
   is_active: boolean;
 }
 
-type TabType = 'clients' | 'companies' | 'balances';
+type TabType = 'clients' | 'companies' | 'balances' | 'agents' | 'route-commissions' | 'internal-companies' | 'currencies';
 
 export function ReferencesPage() {
   const { user } = useAuth();
@@ -39,6 +39,10 @@ export function ReferencesPage() {
   // Остатки по счетам доступны только для бухгалтера и директора
   if (user?.role === 'accountant' || user?.role === 'director') {
     availableTabs.push('balances');
+  }
+  // Агенты и комиссии доступны для senior_manager, accountant, director
+  if (user?.role === 'senior_manager' || user?.role === 'accountant' || user?.role === 'director') {
+    availableTabs.push('agents', 'route-commissions', 'internal-companies', 'currencies');
   }
 
   return (
@@ -61,6 +65,10 @@ export function ReferencesPage() {
               {tab === 'clients' && 'Clients'}
               {tab === 'companies' && 'Companies'}
               {tab === 'balances' && 'Account Balances'}
+              {tab === 'agents' && 'Agents'}
+              {tab === 'route-commissions' && 'Route Commissions'}
+              {tab === 'internal-companies' && 'Internal Companies'}
+              {tab === 'currencies' && 'Currencies'}
             </button>
           ))}
         </nav>
@@ -70,6 +78,10 @@ export function ReferencesPage() {
       {activeTab === 'clients' && <ClientsTab />}
       {activeTab === 'companies' && <CompaniesTab />}
       {activeTab === 'balances' && <AccountBalancesTab />}
+      {activeTab === 'agents' && <AgentsTab />}
+      {activeTab === 'route-commissions' && <RouteCommissionsTab />}
+      {activeTab === 'internal-companies' && <InternalCompaniesTab />}
+      {activeTab === 'currencies' && <CurrenciesTab />}
     </div>
   );
 }
@@ -1154,6 +1166,1241 @@ function ConfirmDeleteModal({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Вкладка агентов
+function AgentsTab() {
+  const queryClient = useQueryClient();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingAgent, setEditingAgent] = useState<any>(null);
+  const [formData, setFormData] = useState({ name: '', commission_percent: '' });
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [agentToDelete, setAgentToDelete] = useState<any>(null);
+
+  const { data: agents } = useQuery({
+    queryKey: ['reference-agents'],
+    queryFn: async () => {
+      const response = await api.get('/api/reference/agents');
+      return response.data;
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const response = await api.post('/api/reference/agents', {
+        name: data.name,
+        commission_percent: parseFloat(data.commission_percent),
+      });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reference-agents'] });
+      setIsModalOpen(false);
+      setFormData({ name: '', commission_percent: '' });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: any }) => {
+      const response = await api.put(`/api/reference/agents/${id}`, {
+        name: data.name,
+        commission_percent: parseFloat(data.commission_percent),
+      });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reference-agents'] });
+      setIsModalOpen(false);
+      setEditingAgent(null);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await api.delete(`/api/reference/agents/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reference-agents'] });
+      setDeleteConfirmOpen(false);
+      setAgentToDelete(null);
+    },
+  });
+
+  const handleDelete = (agent: any) => {
+    setAgentToDelete(agent);
+    setDeleteConfirmOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (agentToDelete) {
+      deleteMutation.mutate(agentToDelete.id);
+    }
+  };
+
+  const handleEdit = (agent: any) => {
+    setEditingAgent(agent);
+    setFormData({
+      name: agent.name,
+      commission_percent: agent.commission_percent.toString(),
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleSubmit = () => {
+    if (editingAgent) {
+      updateMutation.mutate({ id: editingAgent.id, data: formData });
+    } else {
+      createMutation.mutate(formData);
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex justify-between mb-4">
+        <h2 className="text-lg font-semibold">Agents</h2>
+        <button
+          onClick={() => {
+            setEditingAgent(null);
+            setFormData({ name: '', commission_percent: '' });
+            setIsModalOpen(true);
+          }}
+          className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+        >
+          + Add Agent
+        </button>
+      </div>
+
+      <div className="bg-white shadow rounded-lg overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Commission %</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {agents?.map((agent: any) => (
+              <tr key={agent.id}>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{agent.id}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{agent.name}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{agent.commission_percent}%</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  <button
+                    onClick={() => handleEdit(agent)}
+                    className="text-indigo-600 hover:text-indigo-900 mr-3"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleDelete(agent)}
+                    className="text-red-600 hover:text-red-900"
+                  >
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {isModalOpen && (
+        <Modal
+          title={editingAgent ? 'Edit Agent' : 'Add Agent'}
+          onClose={() => {
+            setIsModalOpen(false);
+            setEditingAgent(null);
+          }}
+        >
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Name *</label>
+              <input
+                type="text"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Commission % *</label>
+              <input
+                type="number"
+                step="0.01"
+                value={formData.commission_percent}
+                onChange={(e) => setFormData({ ...formData, commission_percent: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                placeholder="-0.5 or 0.5"
+                required
+              />
+            </div>
+            <div className="flex justify-end space-x-2">
+              <button
+                onClick={() => {
+                  setIsModalOpen(false);
+                  setEditingAgent(null);
+                }}
+                className="px-4 py-2 border border-gray-300 rounded-md"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={!formData.name || !formData.commission_percent || createMutation.isPending || updateMutation.isPending}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {editingAgent ? 'Save' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {deleteConfirmOpen && agentToDelete && (
+        <ConfirmDeleteModal
+          title="Delete Agent"
+          message={`Are you sure you want to delete agent "${agentToDelete.name}"?`}
+          onConfirm={confirmDelete}
+          onCancel={() => {
+            setDeleteConfirmOpen(false);
+            setAgentToDelete(null);
+          }}
+          isDeleting={deleteMutation.isPending}
+        />
+      )}
+    </div>
+  );
+}
+
+// Вкладка комиссий маршрутов
+function RouteCommissionsTab() {
+  const queryClient = useQueryClient();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingCommission, setEditingCommission] = useState<any>(null);
+  const [formData, setFormData] = useState({
+    route_type: '',
+    commission_percent: '',
+    commission_fixed: '',
+    is_fixed_currency: false,
+    currency: '',
+  });
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [commissionToDelete, setCommissionToDelete] = useState<any>(null);
+
+  const routeTypes = [
+    { value: 'direct', label: 'Direct Transfer' },
+    { value: 'exchange', label: 'Exchange' },
+    { value: 'agent', label: 'Agent' },
+    { value: 'partner', label: 'Partner' },
+    { value: 'partner_50_50', label: 'Partner 50-50' },
+  ];
+
+  const { data: commissions } = useQuery({
+    queryKey: ['reference-route-commissions'],
+    queryFn: async () => {
+      const response = await api.get('/api/reference/route-commissions');
+      return response.data;
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const response = await api.post('/api/reference/route-commissions', {
+        route_type: data.route_type,
+        commission_percent: data.commission_percent ? parseFloat(data.commission_percent) : null,
+        commission_fixed: data.commission_fixed ? parseFloat(data.commission_fixed) : null,
+        is_fixed_currency: data.is_fixed_currency,
+        currency: data.currency || null,
+      });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reference-route-commissions'] });
+      setIsModalOpen(false);
+      setFormData({
+        route_type: '',
+        commission_percent: '',
+        commission_fixed: '',
+        is_fixed_currency: false,
+        currency: '',
+      });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: any }) => {
+      const response = await api.put(`/api/reference/route-commissions/${id}`, {
+        commission_percent: data.commission_percent ? parseFloat(data.commission_percent) : null,
+        commission_fixed: data.commission_fixed ? parseFloat(data.commission_fixed) : null,
+        is_fixed_currency: data.is_fixed_currency,
+        currency: data.currency || null,
+      });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reference-route-commissions'] });
+      setIsModalOpen(false);
+      setEditingCommission(null);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await api.delete(`/api/reference/route-commissions/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reference-route-commissions'] });
+      setDeleteConfirmOpen(false);
+      setCommissionToDelete(null);
+    },
+  });
+
+  const handleDelete = (commission: any) => {
+    setCommissionToDelete(commission);
+    setDeleteConfirmOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (commissionToDelete) {
+      deleteMutation.mutate(commissionToDelete.id);
+    }
+  };
+
+  const handleEdit = (commission: any) => {
+    setEditingCommission(commission);
+    setFormData({
+      route_type: commission.route_type,
+      commission_percent: commission.commission_percent?.toString() || '',
+      commission_fixed: commission.commission_fixed?.toString() || '',
+      is_fixed_currency: commission.is_fixed_currency,
+      currency: commission.currency || '',
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleSubmit = () => {
+    if (editingCommission) {
+      updateMutation.mutate({ id: editingCommission.id, data: formData });
+    } else {
+      createMutation.mutate(formData);
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex justify-between mb-4">
+        <h2 className="text-lg font-semibold">Route Commissions</h2>
+        <button
+          onClick={() => {
+            setEditingCommission(null);
+            setFormData({
+              route_type: '',
+              commission_percent: '',
+              commission_fixed: '',
+              is_fixed_currency: false,
+              currency: '',
+            });
+            setIsModalOpen(true);
+          }}
+          className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+        >
+          + Add Route Commission
+        </button>
+      </div>
+
+      <div className="bg-white shadow rounded-lg overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Route Type</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Commission</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {commissions?.map((commission: any) => (
+              <tr key={commission.id}>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{commission.id}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{commission.route_type}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  {commission.is_fixed_currency
+                    ? `${commission.commission_fixed} ${commission.currency || ''}`
+                    : `${commission.commission_percent}%`}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  {commission.is_fixed_currency ? 'Fixed' : 'Percent'}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  <button
+                    onClick={() => handleEdit(commission)}
+                    className="text-indigo-600 hover:text-indigo-900 mr-3"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleDelete(commission)}
+                    className="text-red-600 hover:text-red-900"
+                  >
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {isModalOpen && (
+        <Modal
+          title={editingCommission ? 'Edit Route Commission' : 'Add Route Commission'}
+          onClose={() => {
+            setIsModalOpen(false);
+            setEditingCommission(null);
+          }}
+        >
+          <div className="space-y-4">
+            {!editingCommission && (
+              <div>
+                <label className="block text-sm font-medium mb-1">Route Type *</label>
+                <select
+                  value={formData.route_type}
+                  onChange={(e) => setFormData({ ...formData, route_type: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  required
+                >
+                  <option value="">Select Route Type</option>
+                  {routeTypes.map((rt) => (
+                    <option key={rt.value} value={rt.value}>
+                      {rt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div>
+              <label className="block text-sm font-medium mb-1">
+                <input
+                  type="checkbox"
+                  checked={formData.is_fixed_currency}
+                  onChange={(e) => setFormData({ ...formData, is_fixed_currency: e.target.checked })}
+                  className="mr-2"
+                />
+                Fixed Currency
+              </label>
+            </div>
+            {formData.is_fixed_currency ? (
+              <>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Commission (Fixed) *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={formData.commission_fixed}
+                    onChange={(e) => setFormData({ ...formData, commission_fixed: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Currency *</label>
+                  <input
+                    type="text"
+                    value={formData.currency}
+                    onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="EUR, USD, etc."
+                    required
+                  />
+                </div>
+              </>
+            ) : (
+              <div>
+                <label className="block text-sm font-medium mb-1">Commission % *</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={formData.commission_percent}
+                  onChange={(e) => setFormData({ ...formData, commission_percent: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="-0.3 or 0.6"
+                  required
+                />
+              </div>
+            )}
+            <div className="flex justify-end space-x-2">
+              <button
+                onClick={() => {
+                  setIsModalOpen(false);
+                  setEditingCommission(null);
+                }}
+                className="px-4 py-2 border border-gray-300 rounded-md"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={
+                  (!formData.route_type && !editingCommission) ||
+                  (!formData.commission_percent && !formData.is_fixed_currency) ||
+                  (formData.is_fixed_currency && (!formData.commission_fixed || !formData.currency)) ||
+                  createMutation.isPending ||
+                  updateMutation.isPending
+                }
+                className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {editingCommission ? 'Save' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {deleteConfirmOpen && commissionToDelete && (
+        <ConfirmDeleteModal
+          title="Delete Route Commission"
+          message={`Are you sure you want to delete route commission for "${commissionToDelete.route_type}"?`}
+          onConfirm={confirmDelete}
+          onCancel={() => {
+            setDeleteConfirmOpen(false);
+            setCommissionToDelete(null);
+          }}
+          isDeleting={deleteMutation.isPending}
+        />
+      )}
+    </div>
+  );
+}
+
+// Вкладка внутренних компаний (похожа на CompaniesTab, но для внутренних компаний)
+function InternalCompaniesTab() {
+  const queryClient = useQueryClient();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingCompany, setEditingCompany] = useState<any>(null);
+  const [formData, setFormData] = useState({ name: '', contact_info: '', notes: '' });
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [companyToDelete, setCompanyToDelete] = useState<any>(null);
+  const [companyAccountsModalOpen, setCompanyAccountsModalOpen] = useState(false);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
+
+  const { data: companies } = useQuery({
+    queryKey: ['reference-internal-companies'],
+    queryFn: async () => {
+      const response = await api.get('/api/reference/internal-companies');
+      return response.data;
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const response = await api.post('/api/reference/internal-companies', data);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reference-internal-companies'] });
+      setIsModalOpen(false);
+      setFormData({ name: '', contact_info: '', notes: '' });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: any }) => {
+      const response = await api.put(`/api/reference/internal-companies/${id}`, data);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reference-internal-companies'] });
+      setIsModalOpen(false);
+      setEditingCompany(null);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await api.delete(`/api/reference/internal-companies/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reference-internal-companies'] });
+      setDeleteConfirmOpen(false);
+      setCompanyToDelete(null);
+    },
+  });
+
+  const handleDelete = (company: any) => {
+    setCompanyToDelete(company);
+    setDeleteConfirmOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (companyToDelete) {
+      deleteMutation.mutate(companyToDelete.id);
+    }
+  };
+
+  const handleEdit = (company: any) => {
+    setEditingCompany(company);
+    setFormData({
+      name: company.name,
+      contact_info: company.contact_info || '',
+      notes: company.notes || '',
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleSubmit = () => {
+    if (editingCompany) {
+      updateMutation.mutate({ id: editingCompany.id, data: formData });
+    } else {
+      createMutation.mutate(formData);
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex justify-between mb-4">
+        <h2 className="text-lg font-semibold">Internal Companies</h2>
+        <button
+          onClick={() => {
+            setEditingCompany(null);
+            setFormData({ name: '', contact_info: '', notes: '' });
+            setIsModalOpen(true);
+          }}
+          className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+        >
+          + Add Internal Company
+        </button>
+      </div>
+
+      <div className="bg-white shadow rounded-lg overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Contact Info</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {companies?.map((company: any) => (
+              <tr key={company.id}>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{company.id}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{company.name}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{company.contact_info || '-'}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  <button
+                    onClick={() => {
+                      setSelectedCompanyId(company.id);
+                      setCompanyAccountsModalOpen(true);
+                    }}
+                    className="text-blue-600 hover:text-blue-900 mr-3"
+                  >
+                    Accounts
+                  </button>
+                  <button
+                    onClick={() => handleEdit(company)}
+                    className="text-indigo-600 hover:text-indigo-900 mr-3"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleDelete(company)}
+                    className="text-red-600 hover:text-red-900"
+                  >
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {isModalOpen && (
+        <Modal
+          title={editingCompany ? 'Edit Internal Company' : 'Add Internal Company'}
+          onClose={() => {
+            setIsModalOpen(false);
+            setEditingCompany(null);
+          }}
+        >
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Name *</label>
+              <input
+                type="text"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Contact Info</label>
+              <input
+                type="text"
+                value={formData.contact_info}
+                onChange={(e) => setFormData({ ...formData, contact_info: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Notes</label>
+              <textarea
+                value={formData.notes}
+                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                rows={3}
+              />
+            </div>
+            <div className="flex justify-end space-x-2">
+              <button
+                onClick={() => {
+                  setIsModalOpen(false);
+                  setEditingCompany(null);
+                }}
+                className="px-4 py-2 border border-gray-300 rounded-md"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={!formData.name || createMutation.isPending || updateMutation.isPending}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {editingCompany ? 'Save' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {companyAccountsModalOpen && selectedCompanyId && (
+        <InternalCompanyAccountsModal
+          companyId={selectedCompanyId}
+          onClose={() => {
+            setCompanyAccountsModalOpen(false);
+            setSelectedCompanyId(null);
+          }}
+        />
+      )}
+
+      {deleteConfirmOpen && companyToDelete && (
+        <ConfirmDeleteModal
+          title="Delete Internal Company"
+          message={`Are you sure you want to delete internal company "${companyToDelete.name}"?`}
+          onConfirm={confirmDelete}
+          onCancel={() => {
+            setDeleteConfirmOpen(false);
+            setCompanyToDelete(null);
+          }}
+          isDeleting={deleteMutation.isPending}
+        />
+      )}
+    </div>
+  );
+}
+
+// Модальное окно для управления счетами внутренней компании
+function InternalCompanyAccountsModal({ companyId, onClose }: { companyId: number; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingAccount, setEditingAccount] = useState<any>(null);
+  const [formData, setFormData] = useState({ account_name: '', account_number: '', currency: '', balance: '0' });
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [accountToDelete, setAccountToDelete] = useState<any>(null);
+
+  const { data: company } = useQuery({
+    queryKey: ['reference-internal-company', companyId],
+    queryFn: async () => {
+      const response = await api.get(`/api/reference/internal-companies/${companyId}`);
+      return response.data;
+    },
+  });
+
+  const { data: accounts } = useQuery({
+    queryKey: ['reference-internal-company-accounts', companyId],
+    queryFn: async () => {
+      const response = await api.get('/api/reference/internal-company-accounts');
+      return response.data;
+    },
+  });
+
+  const companyAccounts = accounts?.filter((account: any) => account.company_id === companyId) || [];
+
+  const createMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const response = await api.post('/api/reference/internal-company-accounts', {
+        ...data,
+        company_id: companyId,
+        balance: parseFloat(data.balance),
+      });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reference-internal-company-accounts'] });
+      setIsModalOpen(false);
+      setFormData({ account_name: '', account_number: '', currency: '', balance: '0' });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: any }) => {
+      const response = await api.put(`/api/reference/internal-company-accounts/${id}`, {
+        ...data,
+        balance: data.balance ? parseFloat(data.balance) : undefined,
+      });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reference-internal-company-accounts'] });
+      setIsModalOpen(false);
+      setEditingAccount(null);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await api.delete(`/api/reference/internal-company-accounts/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reference-internal-company-accounts'] });
+      setDeleteConfirmOpen(false);
+      setAccountToDelete(null);
+    },
+  });
+
+  const handleDelete = (account: any) => {
+    setAccountToDelete(account);
+    setDeleteConfirmOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (accountToDelete) {
+      deleteMutation.mutate(accountToDelete.id);
+    }
+  };
+
+  const handleEdit = (account: any) => {
+    setEditingAccount(account);
+    setFormData({
+      account_name: account.account_name,
+      account_number: account.account_number,
+      currency: account.currency,
+      balance: account.balance.toString(),
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleSubmit = () => {
+    if (editingAccount) {
+      updateMutation.mutate({ id: editingAccount.id, data: formData });
+    } else {
+      createMutation.mutate(formData);
+    }
+  };
+
+  return (
+    <Modal title={`Internal Company Accounts - ${company?.name || 'Company'}`} onClose={onClose}>
+      <div className="space-y-4">
+        <div className="flex justify-between mb-4">
+          <h3 className="text-lg font-semibold">Accounts</h3>
+          <button
+            onClick={() => {
+              setEditingAccount(null);
+              setFormData({ account_name: '', account_number: '', currency: '', balance: '0' });
+              setIsModalOpen(true);
+            }}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+          >
+            + Add Account
+          </button>
+        </div>
+
+        <div className="bg-white shadow rounded-lg overflow-hidden">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Account Name</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Account Number</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Currency</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Balance</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {companyAccounts.length > 0 ? (
+                companyAccounts.map((account: any) => (
+                  <tr key={account.id}>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">{account.id}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{account.account_name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{account.account_number}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">{account.currency}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">{parseFloat(account.balance).toLocaleString()}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <button
+                        onClick={() => handleEdit(account)}
+                        className="text-indigo-600 hover:text-indigo-900 mr-3"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDelete(account)}
+                        className="text-red-600 hover:text-red-900"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={6} className="px-6 py-4 text-center text-sm text-gray-500">
+                    No accounts found
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {isModalOpen && (
+          <Modal
+            title={editingAccount ? 'Edit Account' : 'Add Account'}
+            onClose={() => {
+              setIsModalOpen(false);
+              setEditingAccount(null);
+            }}
+            zIndex={60}
+          >
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Account Name *</label>
+                <input
+                  type="text"
+                  value={formData.account_name}
+                  onChange={(e) => setFormData({ ...formData, account_name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="e.g., IBAN EUR"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Account Number *</label>
+                <input
+                  type="text"
+                  value={formData.account_number}
+                  onChange={(e) => setFormData({ ...formData, account_number: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="IBAN or wallet address"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Currency *</label>
+                <input
+                  type="text"
+                  value={formData.currency}
+                  onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="EUR, USD, BTC, USDT, etc."
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Balance *</label>
+                <input
+                  type="number"
+                  step="0.0000000001"
+                  value={formData.balance}
+                  onChange={(e) => setFormData({ ...formData, balance: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  required
+                />
+              </div>
+              <div className="flex justify-end space-x-2">
+                <button
+                  onClick={() => {
+                    setIsModalOpen(false);
+                    setEditingAccount(null);
+                  }}
+                  className="px-4 py-2 border border-gray-300 rounded-md"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSubmit}
+                  disabled={
+                    !formData.account_name ||
+                    !formData.account_number ||
+                    !formData.currency ||
+                    createMutation.isPending ||
+                    updateMutation.isPending
+                  }
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {editingAccount ? 'Save' : 'Create'}
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )}
+
+        {deleteConfirmOpen && accountToDelete && (
+          <ConfirmDeleteModal
+            title="Delete Account"
+            message={`Are you sure you want to delete account "${accountToDelete.account_name}"?`}
+            onConfirm={confirmDelete}
+            onCancel={() => {
+              setDeleteConfirmOpen(false);
+              setAccountToDelete(null);
+            }}
+            isDeleting={deleteMutation.isPending}
+            zIndex={70}
+          />
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+// Вкладка валют
+function CurrenciesTab() {
+  const queryClient = useQueryClient();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingCurrency, setEditingCurrency] = useState<any>(null);
+  const [formData, setFormData] = useState({ code: '', name: '', is_crypto: false });
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [currencyToDelete, setCurrencyToDelete] = useState<any>(null);
+
+  const { data: currencies } = useQuery({
+    queryKey: ['reference-currencies'],
+    queryFn: async () => {
+      const response = await api.get('/api/reference/currencies');
+      return response.data;
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const response = await api.post('/api/reference/currencies', {
+        code: data.code.toUpperCase(),
+        name: data.name,
+        is_crypto: data.is_crypto,
+      });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reference-currencies'] });
+      setIsModalOpen(false);
+      setFormData({ code: '', name: '', is_crypto: false });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: any }) => {
+      const response = await api.put(`/api/reference/currencies/${id}`, {
+        name: data.name,
+        is_crypto: data.is_crypto,
+      });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reference-currencies'] });
+      setIsModalOpen(false);
+      setEditingCurrency(null);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await api.delete(`/api/reference/currencies/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reference-currencies'] });
+      setDeleteConfirmOpen(false);
+      setCurrencyToDelete(null);
+    },
+  });
+
+  const handleDelete = (currency: any) => {
+    setCurrencyToDelete(currency);
+    setDeleteConfirmOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (currencyToDelete) {
+      deleteMutation.mutate(currencyToDelete.id);
+    }
+  };
+
+  const handleEdit = (currency: any) => {
+    setEditingCurrency(currency);
+    setFormData({
+      code: currency.code,
+      name: currency.name,
+      is_crypto: currency.is_crypto,
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleSubmit = () => {
+    if (editingCurrency) {
+      updateMutation.mutate({ id: editingCurrency.id, data: formData });
+    } else {
+      createMutation.mutate(formData);
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex justify-between mb-4">
+        <h2 className="text-lg font-semibold">Currencies</h2>
+        <button
+          onClick={() => {
+            setEditingCurrency(null);
+            setFormData({ code: '', name: '', is_crypto: false });
+            setIsModalOpen(true);
+          }}
+          className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+        >
+          + Add Currency
+        </button>
+      </div>
+
+      <div className="bg-white shadow rounded-lg overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Code</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {currencies?.map((currency: any) => (
+              <tr key={currency.id}>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{currency.id}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{currency.code}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{currency.name}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  <span className={`px-2 py-1 text-xs rounded-full ${
+                    currency.is_crypto 
+                      ? 'bg-purple-100 text-purple-800' 
+                      : 'bg-blue-100 text-blue-800'
+                  }`}>
+                    {currency.is_crypto ? 'Crypto' : 'Fiat'}
+                  </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  <button
+                    onClick={() => handleEdit(currency)}
+                    className="text-indigo-600 hover:text-indigo-900 mr-3"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleDelete(currency)}
+                    className="text-red-600 hover:text-red-900"
+                  >
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {isModalOpen && (
+        <Modal
+          title={editingCurrency ? 'Edit Currency' : 'Add Currency'}
+          onClose={() => {
+            setIsModalOpen(false);
+            setEditingCurrency(null);
+          }}
+        >
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Code *</label>
+              <input
+                type="text"
+                value={formData.code}
+                onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase() })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                placeholder="EUR, USD, USDT, BTC, etc."
+                required
+                disabled={!!editingCurrency}
+              />
+              {editingCurrency && (
+                <p className="text-xs text-gray-400 mt-1">Currency code cannot be changed</p>
+              )}
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Name *</label>
+              <input
+                type="text"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                placeholder="Euro, US Dollar, Tether, Bitcoin, etc."
+                required
+              />
+            </div>
+            <div>
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={formData.is_crypto}
+                  onChange={(e) => setFormData({ ...formData, is_crypto: e.target.checked })}
+                  className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                <span className="text-sm font-medium">Cryptocurrency</span>
+              </label>
+            </div>
+            <div className="flex justify-end space-x-2">
+              <button
+                onClick={() => {
+                  setIsModalOpen(false);
+                  setEditingCurrency(null);
+                }}
+                className="px-4 py-2 border border-gray-300 rounded-md"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={!formData.code || !formData.name || createMutation.isPending || updateMutation.isPending}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {editingCurrency ? 'Save' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {deleteConfirmOpen && currencyToDelete && (
+        <ConfirmDeleteModal
+          title="Delete Currency"
+          message={`Are you sure you want to delete currency "${currencyToDelete.code} - ${currencyToDelete.name}"?`}
+          onConfirm={confirmDelete}
+          onCancel={() => {
+            setDeleteConfirmOpen(false);
+            setCurrencyToDelete(null);
+          }}
+          isDeleting={deleteMutation.isPending}
+        />
+      )}
     </div>
   );
 }

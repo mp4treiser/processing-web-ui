@@ -10,6 +10,10 @@ class DealBase(BaseModel):
     client_id: int
     total_eur_request: Decimal
     client_rate_percent: Decimal = Decimal("1.0")
+    # Новые поля для валют
+    deal_amount: Decimal | None = None
+    client_sends_currency: str | None = None
+    client_receives_currency: str | None = None
 
 
 class DealCreate(DealBase):

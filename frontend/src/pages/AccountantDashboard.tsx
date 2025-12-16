@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useState } from 'react';
+import { CompanyBalancesDisplay } from '../components/CompanyBalancesDisplay';
 
 interface DashboardStats {
   summary: {
@@ -74,6 +75,9 @@ export function AccountantDashboard() {
     <div className="px-4 py-6">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900 mb-4">Financial Dashboard (Accountant)</h1>
+        
+        {/* Блок остатков компаний */}
+        <CompanyBalancesDisplay showProjected={true} />
 
         {/* Фильтры по датам */}
         <div className="bg-white shadow rounded-lg p-4 mb-6">
