@@ -32,19 +32,20 @@ interface Transaction {
   recipient_details?: string;
 }
 
+// Интерфейсы Route и TransactionRoute определены в RouteBuilder.tsx
+// Используем их через импорт или определяем здесь для совместимости
 interface Route {
   id?: string;
   route_type: 'direct' | 'exchange' | 'partner' | 'partner_50_50' | '';
+  exchange_rate: number;
   [key: string]: any;
 }
 
 interface TransactionRoute {
-  from_currency: string;
-  to_currency: string;
-  exchange_rate: number;
   client_company_id: number;
   amount_for_client: number;
   routes: Route[];
+  final_income?: number;
   [key: string]: any;
 }
 
@@ -64,6 +65,7 @@ export function NewDeal() {
   const [clientSendsCurrency, setClientSendsCurrency] = useState<string>('');
   const [clientReceivesCurrency, setClientReceivesCurrency] = useState<string>('');
   const [routeTransactions, setRouteTransactions] = useState<TransactionRoute[]>([]);
+  const [selectedAccounts, setSelectedAccounts] = useState<Array<{account_id: number; amount: number; currency: string}>>([]);
 
   const { data: clients } = useQuery<Client[]>({
     queryKey: ['reference-clients'],
@@ -167,8 +169,9 @@ export function NewDeal() {
 
       // Проверяем, что все транзакции заполнены
       const invalidTransactions = routeTransactions.filter(t => 
-        !t.from_currency || !t.to_currency || !t.exchange_rate || !t.client_company_id || 
-        !t.amount_for_client || !t.routes || t.routes.length === 0 || !t.routes.some(r => r.route_type)
+        !t.client_company_id || 
+        !t.amount_for_client || !t.routes || t.routes.length === 0 || 
+        t.routes.some(r => !r.route_type || !r.exchange_rate)
       );
       if (invalidTransactions.length > 0) {
         alert('Пожалуйста, заполните все обязательные поля для всех транзакций');
@@ -184,7 +187,7 @@ export function NewDeal() {
               return;
             }
           } else if (route.route_type === 'exchange') {
-            if (!route.crypto_account_id || !route.exchange_from_currency || !route.exchange_to_currency || !route.crypto_exchange_rate) {
+            if (!route.crypto_account_id || !route.exchange_from_currency || !route.crypto_exchange_rate || !route.amount_from_account) {
               alert('Пожалуйста, заполните все поля для биржи');
               return;
             }
@@ -212,35 +215,38 @@ export function NewDeal() {
           client_receives_currency: clientReceivesCurrency,
           client_rate_percent: clientRate,
           transactions: routeTransactions.map(t => ({
-            from_currency: t.from_currency,
-            to_currency: t.to_currency,
-            exchange_rate: t.exchange_rate,
             client_company_id: t.client_company_id,
             amount_for_client: t.amount_for_client,
-            route_type: t.route_type,
-            // Direct
-            internal_company_id: t.internal_company_id,
-            internal_company_account_id: t.internal_company_account_id,
-            amount_from_account: t.amount_from_account,
-            bank_commission_id: t.bank_commission_id,
-            // Exchange
-            crypto_account_id: t.crypto_account_id,
-            exchange_from_currency: t.exchange_from_currency,
-            exchange_to_currency: t.exchange_to_currency,
-            crypto_exchange_rate: t.crypto_exchange_rate,
-            agent_commission_id: t.agent_commission_id,
-            exchange_commission_id: t.exchange_commission_id,
-            exchange_bank_commission_id: t.exchange_bank_commission_id,
-            // Partner
-            partner_company_id: t.partner_company_id,
-            amount_to_partner_usdt: t.amount_to_partner_usdt,
-            amount_partner_sends: t.amount_partner_sends,
-            partner_commission_id: t.partner_commission_id,
-            // Partner 50-50
-            partner_50_50_company_id: t.partner_50_50_company_id,
-            amount_to_partner_50_50_usdt: t.amount_to_partner_50_50_usdt,
-            amount_partner_50_50_sends: t.amount_partner_50_50_sends,
-            partner_50_50_commission_id: t.partner_50_50_commission_id,
+            routes: t.routes.map(r => ({
+              route_type: r.route_type,
+              exchange_rate: r.exchange_rate,
+              // Direct
+              internal_company_id: r.internal_company_id,
+              internal_company_account_id: r.internal_company_account_id,
+              amount_from_account: r.amount_from_account,
+              bank_commission_id: r.bank_commission_id,
+              // Exchange
+              crypto_account_id: r.crypto_account_id,
+              exchange_from_currency: r.exchange_from_currency,
+              exchange_amount: r.exchange_amount,
+              crypto_exchange_rate: r.crypto_exchange_rate,
+              agent_commission_id: r.agent_commission_id,
+              exchange_commission_id: r.exchange_commission_id,
+              exchange_bank_commission_id: r.exchange_bank_commission_id,
+              // Partner
+              partner_company_id: r.partner_company_id,
+              partner_account_id: r.partner_account_id,
+              amount_to_partner_usdt: r.amount_to_partner_usdt,
+              amount_partner_sends: r.amount_partner_sends,
+              partner_commission_id: r.partner_commission_id,
+              // Partner 50-50
+              partner_50_50_company_id: r.partner_50_50_company_id,
+              partner_50_50_account_id: r.partner_50_50_account_id,
+              amount_to_partner_50_50_usdt: r.amount_to_partner_50_50_usdt,
+              amount_partner_50_50_sends: r.amount_partner_50_50_sends,
+              partner_50_50_commission_id: r.partner_50_50_commission_id,
+              final_income: r.final_income,
+            })),
             final_income: t.final_income,
           })),
         });
@@ -310,20 +316,21 @@ export function NewDeal() {
   };
 
   return (
-    <div className="px-4 py-6 max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Create New Deal</h1>
-      
-      {/* Блок остатков компаний для бухгалтера */}
-      {user?.role === 'accountant' && <CompanyBalancesDisplay showProjected={true} />}
+    <div className="w-screen relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] px-3 py-2">
+      <div className="max-w-full">
+        <h1 className="text-lg font-bold text-gray-900 mb-2">Create New Deal</h1>
+        
+        {/* Блок остатков компаний для бухгалтера */}
+        {user?.role === 'accountant' && <CompanyBalancesDisplay showProjected={true} selectedAccounts={selectedAccounts} />}
 
-      <form onSubmit={handleSubmit} className="bg-white shadow rounded-lg p-6 space-y-6">
+        <form onSubmit={handleSubmit} className="w-full bg-white shadow rounded-lg p-3 space-y-2">
         {/* Предупреждение о задолженности */}
-        {clientDebts && clientDebts.length > 0 && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-            <p className="text-sm font-medium text-yellow-800 mb-2">
+        {user?.role === 'accountant' && clientDebts && clientDebts.length > 0 && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 mb-2">
+            <p className="text-xs font-medium text-yellow-800 mb-1">
               ⚠️ Client has debt:
             </p>
-            <ul className="list-disc list-inside text-sm text-yellow-700 space-y-1">
+            <ul className="list-disc list-inside text-xs text-yellow-700 space-y-0.5">
               {clientDebts.map((deal: any) => (
                 <li key={deal.id}>
                   Deal #{deal.id}: {parseFloat(deal.client_debt_amount || '0').toLocaleString()} EUR
@@ -334,38 +341,39 @@ export function NewDeal() {
                 </li>
               ))}
             </ul>
-            <p className="text-xs text-yellow-600 mt-2">
+            <p className="text-xs text-yellow-600 mt-1">
               It is recommended to remind the client about the debt and offer to pay it off as part of this deal.
             </p>
           </div>
         )}
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Client *
-          </label>
-          <select
-            value={clientId}
-            onChange={(e) => setClientId(Number(e.target.value) || '')}
-            required
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-          >
-            <option value="">Select a client</option>
-            {clients?.map((client) => (
-              <option key={client.id} value={client.id}>
-                {client.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
+        
         {user?.role === 'accountant' ? (
-          // Новый интерфейс для бухгалтера
-          <div className="space-y-4">
-            <div className="grid grid-cols-3 gap-4">
+          // Новый интерфейс для бухгалтера - две колонки
+          <div className="grid grid-cols-12 gap-4">
+            {/* Левая колонка - выбор клиента и валют */}
+            <div className="col-span-3 space-y-2">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Deal Amount *
+                <label className="block text-xs font-medium text-gray-700 mb-0.5">
+                  Client *
+                </label>
+                <select
+                  value={clientId}
+                  onChange={(e) => setClientId(Number(e.target.value) || '')}
+                  required
+                  className="w-full px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                >
+                  <option value="">Select a client</option>
+                  {clients?.map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {client.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-0.5">
+                  Amount Client Wants to Receive *
                 </label>
                 <input
                   type="number"
@@ -373,18 +381,20 @@ export function NewDeal() {
                   value={dealAmount}
                   onChange={(e) => setDealAmount(e.target.value)}
                   required
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                  className="w-full px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
                 />
+                <p className="text-xs text-gray-500 mt-0.5">Total amount client will receive in {clientReceivesCurrency || 'target currency'}</p>
               </div>
+              
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-xs font-medium text-gray-700 mb-0.5">
                   Client Sends Currency *
                 </label>
                 <select
                   value={clientSendsCurrency}
                   onChange={(e) => setClientSendsCurrency(e.target.value)}
                   required
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                  className="w-full px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
                 >
                   <option value="">Select currency</option>
                   {currencies?.map((curr: any) => (
@@ -394,15 +404,16 @@ export function NewDeal() {
                   ))}
                 </select>
               </div>
+              
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-xs font-medium text-gray-700 mb-0.5">
                   Client Receives Currency *
                 </label>
                 <select
                   value={clientReceivesCurrency}
                   onChange={(e) => setClientReceivesCurrency(e.target.value)}
                   required
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                  className="w-full px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
                 >
                   <option value="">Select currency</option>
                   {currencies?.map((curr: any) => (
@@ -413,78 +424,88 @@ export function NewDeal() {
                 </select>
               </div>
             </div>
+            
+            {/* Правая колонка - Route Builder */}
+            <div className="col-span-9">
+              {routeTransactions.length === 0 ? (
+                <div className="text-center py-2">
+                  <button
+                    type="button"
+                    onClick={() => setRouteTransactions([{
+                      client_company_id: 0,
+                      amount_for_client: 0,
+                      routes: [],
+                    }])}
+                    className="px-3 py-1 text-xs bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+                  >
+                    + Add First Transaction
+                  </button>
+                </div>
+              ) : (
+                <RouteBuilder
+                  clientId={clientId as number}
+                  transactions={routeTransactions}
+                  onUpdate={setRouteTransactions}
+                  dealAmount={parseFloat(dealAmount) || undefined}
+                  clientSendsCurrency={clientSendsCurrency}
+                  clientReceivesCurrency={clientReceivesCurrency}
+                  onSelectedAccountsChange={setSelectedAccounts}
+                />
+              )}
+            </div>
           </div>
         ) : (
           // Старый интерфейс для менеджера
-          <div className="grid grid-cols-2 gap-4">
+          <>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Total EUR Request *
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Client *
               </label>
-              <input
-                type="number"
-                step="0.01"
-                value={totalEur}
-                onChange={(e) => setTotalEur(e.target.value)}
+              <select
+                value={clientId}
+                onChange={(e) => setClientId(Number(e.target.value) || '')}
                 required
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-              />
+                className="w-full px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+              >
+                <option value="">Select a client</option>
+                {clients?.map((client) => (
+                  <option key={client.id} value={client.id}>
+                    {client.name}
+                  </option>
+                ))}
+              </select>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Client Rate % *
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={clientRate}
-                onChange={(e) => setClientRate(e.target.value)}
-                required
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-              />
-            </div>
-          </div>
-        )}
-
-        <div>
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold">
-              {user?.role === 'accountant' ? 'Route Builder (Transactions)' : 'Beneficiaries (Transactions)'}
-            </h2>
-          </div>
-
-          {user?.role === 'accountant' ? (
-            // Новый конструктор маршрутов для бухгалтера
-            routeTransactions.length === 0 ? (
-              <div className="text-center py-4">
-                <button
-                  type="button"
-                  onClick={() => setRouteTransactions([{
-                    from_currency: '',
-                    to_currency: '',
-                    exchange_rate: 0,
-                    client_company_id: 0,
-                    amount_for_client: 0,
-                    routes: [],
-                  }])}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
-                >
-                  + Add First Transaction
-                </button>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Total EUR Request *
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={totalEur}
+                  onChange={(e) => setTotalEur(e.target.value)}
+                  required
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                />
               </div>
-            ) : (
-              <RouteBuilder
-                clientId={clientId as number}
-                transactions={routeTransactions}
-                onUpdate={setRouteTransactions}
-                dealAmount={parseFloat(dealAmount) || undefined}
-                clientSendsCurrency={clientSendsCurrency}
-                clientReceivesCurrency={clientReceivesCurrency}
-              />
-            )
-          ) : (
-            // Старый интерфейс для менеджера
-            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Client Rate % *
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={clientRate}
+                  onChange={(e) => setClientRate(e.target.value)}
+                  required
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                />
+              </div>
+            </div>
+            
+            <div>
               <div className="flex justify-end mb-4">
                 <button
                   type="button"
@@ -535,43 +556,29 @@ export function NewDeal() {
                   </p>
                 )}
               </div>
-            </>
-          )}
-
-          {/* Итоговая сумма для бухгалтера */}
-          {user?.role === 'accountant' && routeTransactions.length > 0 && (
-            <div className="mt-4 p-3 bg-gray-50 rounded-md">
-              <p className="text-sm text-gray-700">
-                <strong>Total Final Income:</strong>{' '}
-                {routeTransactions
-                  .reduce((sum, t) => sum + (t.final_income || 0), 0)
-                  .toLocaleString(undefined, { maximumFractionDigits: 2 })}{' '}
-                {clientReceivesCurrency || 'EUR'}
-              </p>
-              <p className="text-sm text-gray-700">
-                <strong>Deal Amount:</strong> {parseFloat(dealAmount || '0').toLocaleString()} {clientSendsCurrency || 'USDT'}
-              </p>
             </div>
-          )}
-        </div>
+          </>
+        )}
 
-        <div className="flex justify-end space-x-4">
+
+        <div className="flex justify-end space-x-2">
           <button
             type="button"
             onClick={() => navigate(-1)}
-            className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+            className="px-3 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={createMutation.isPending}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
+            className="px-3 py-1 text-xs bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
           >
             {createMutation.isPending ? 'Creating...' : 'Create Deal'}
           </button>
         </div>
       </form>
+      </div>
     </div>
   );
 }
