@@ -7,6 +7,7 @@ import { Layout } from './components/Layout';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { DealDetail } from './pages/DealDetail';
+import { DealEdit } from './pages/DealEdit';
 import { NewDeal } from './pages/NewDeal';
 import { AccountantView } from './pages/AccountantView';
 import { DirectorDashboard } from './pages/DirectorDashboard';
@@ -60,6 +61,16 @@ function AppRoutes() {
           <ProtectedRoute>
             <Layout>
               <DealDetail />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/deals/:id/edit"
+        element={
+          <ProtectedRoute allowedRoles={['accountant']}>
+            <Layout>
+              <DealEdit />
             </Layout>
           </ProtectedRoute>
         }

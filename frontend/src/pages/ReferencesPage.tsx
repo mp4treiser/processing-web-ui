@@ -28,7 +28,7 @@ interface CompanyAccount {
   is_active: boolean;
 }
 
-type TabType = 'clients' | 'companies' | 'balances' | 'agents' | 'route-commissions' | 'internal-companies' | 'currencies';
+type TabType = 'clients' | 'companies' | 'balances' | 'agents' | 'route-commissions' | 'internal-companies' | 'currencies' | 'templates';
 
 export function ReferencesPage() {
   const { user } = useAuth();
@@ -42,7 +42,7 @@ export function ReferencesPage() {
   }
   // Агенты и комиссии доступны для senior_manager, accountant, director
   if (user?.role === 'senior_manager' || user?.role === 'accountant' || user?.role === 'director') {
-    availableTabs.push('agents', 'route-commissions', 'internal-companies', 'currencies');
+    availableTabs.push('agents', 'route-commissions', 'internal-companies', 'currencies', 'templates');
   }
 
   return (
@@ -69,6 +69,7 @@ export function ReferencesPage() {
               {tab === 'route-commissions' && 'Route Commissions'}
               {tab === 'internal-companies' && 'Internal Companies'}
               {tab === 'currencies' && 'Currencies'}
+              {tab === 'templates' && 'Templates'}
             </button>
           ))}
         </nav>
@@ -82,6 +83,7 @@ export function ReferencesPage() {
       {activeTab === 'route-commissions' && <RouteCommissionsTab />}
       {activeTab === 'internal-companies' && <InternalCompaniesTab />}
       {activeTab === 'currencies' && <CurrenciesTab />}
+      {activeTab === 'templates' && <TemplatesTab />}
     </div>
   );
 }
@@ -1915,6 +1917,8 @@ function InternalCompanyAccountsModal({ companyId, onClose }: { companyId: numbe
   const [formData, setFormData] = useState({ account_name: '', account_number: '', currency: '', balance: '0' });
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [accountToDelete, setAccountToDelete] = useState<any>(null);
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
 
   const { data: company } = useQuery({
     queryKey: ['reference-internal-company', companyId],
@@ -1933,6 +1937,16 @@ function InternalCompanyAccountsModal({ companyId, onClose }: { companyId: numbe
   });
 
   const companyAccounts = accounts?.filter((account: any) => account.company_id === companyId) || [];
+
+  const { data: history } = useQuery({
+    queryKey: ['internal-company-account-history', selectedAccountId],
+    queryFn: async () => {
+      if (!selectedAccountId) return [];
+      const response = await api.get(`/api/reference/internal-company-accounts/${selectedAccountId}/history`);
+      return response.data;
+    },
+    enabled: !!selectedAccountId && historyModalOpen,
+  });
 
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -2007,7 +2021,12 @@ function InternalCompanyAccountsModal({ companyId, onClose }: { companyId: numbe
   };
 
   return (
-    <Modal title={`Internal Company Accounts - ${company?.name || 'Company'}`} onClose={onClose}>
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center" style={{ zIndex: 50 }}>
+      <div className="bg-white rounded-lg p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-bold">Internal Company Accounts - {company?.name || 'Company'}</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">✕</button>
+        </div>
       <div className="space-y-4">
         <div className="flex justify-between mb-4">
           <h3 className="text-lg font-semibold">Accounts</h3>
@@ -2045,6 +2064,15 @@ function InternalCompanyAccountsModal({ companyId, onClose }: { companyId: numbe
                     <td className="px-6 py-4 whitespace-nowrap text-sm">{account.currency}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">{parseFloat(account.balance).toLocaleString()}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <button
+                        onClick={() => {
+                          setSelectedAccountId(account.id);
+                          setHistoryModalOpen(true);
+                        }}
+                        className="text-blue-600 hover:text-blue-900 mr-3"
+                      >
+                        History
+                      </button>
                       <button
                         onClick={() => handleEdit(account)}
                         className="text-indigo-600 hover:text-indigo-900 mr-3"
@@ -2166,8 +2194,61 @@ function InternalCompanyAccountsModal({ companyId, onClose }: { companyId: numbe
             zIndex={70}
           />
         )}
+
+        {historyModalOpen && selectedAccountId && (
+          <Modal
+            title="Balance Change History"
+            onClose={() => {
+              setHistoryModalOpen(false);
+              setSelectedAccountId(null);
+            }}
+            zIndex={60}
+          >
+            <div className="max-h-96 overflow-y-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Previous</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">New</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Change</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Comment</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {history && history.length > 0 ? (
+                    history.map((h: any) => (
+                      <tr key={h.id}>
+                        <td className="px-4 py-2 text-sm">{new Date(h.created_at).toLocaleString()}</td>
+                        <td className="px-4 py-2 text-sm">{parseFloat(h.previous_balance).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                        <td className="px-4 py-2 text-sm">{parseFloat(h.new_balance).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                        <td className={`px-4 py-2 text-sm ${parseFloat(h.change_amount) < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                          {parseFloat(h.change_amount) > 0 ? '+' : ''}{parseFloat(h.change_amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="px-4 py-2 text-sm">
+                          <span className={`px-2 py-1 rounded text-xs ${h.change_type === 'auto' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'}`}>
+                            {h.change_type === 'auto' ? 'Automatic' : 'Manual'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-sm text-gray-600">{h.comment || '-'}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-4 text-center text-sm text-gray-500">
+                        No history records found
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Modal>
+        )}
       </div>
-    </Modal>
+      </div>
+    </div>
   );
 }
 
@@ -2397,6 +2478,253 @@ function CurrenciesTab() {
           onCancel={() => {
             setDeleteConfirmOpen(false);
             setCurrencyToDelete(null);
+          }}
+          isDeleting={deleteMutation.isPending}
+        />
+      )}
+    </div>
+  );
+}
+
+// Вкладка шаблонов
+function TemplatesTab() {
+  const queryClient = useQueryClient();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<any>(null);
+  const [formData, setFormData] = useState({
+    name: '',
+    description: '',
+    client_sends_currency: '',
+    client_receives_currency: '',
+  });
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [templateToDelete, setTemplateToDelete] = useState<any>(null);
+
+  const { data: templates } = useQuery({
+    queryKey: ['templates'],
+    queryFn: async () => {
+      const response = await api.get('/api/templates?active_only=false');
+      return response.data;
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await api.delete(`/api/templates/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['templates'] });
+      setDeleteConfirmOpen(false);
+      setTemplateToDelete(null);
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: any }) => {
+      const response = await api.put(`/api/templates/${id}`, data);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['templates'] });
+      setIsModalOpen(false);
+      setEditingTemplate(null);
+    },
+  });
+
+  const handleDelete = (template: any) => {
+    setTemplateToDelete(template);
+    setDeleteConfirmOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (templateToDelete) {
+      deleteMutation.mutate(templateToDelete.id);
+    }
+  };
+
+  const handleEdit = (template: any) => {
+    setEditingTemplate(template);
+    setFormData({
+      name: template.name,
+      description: template.description || '',
+      client_sends_currency: template.client_sends_currency || '',
+      client_receives_currency: template.client_receives_currency || '',
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleSubmit = () => {
+    if (editingTemplate) {
+      updateMutation.mutate({ id: editingTemplate.id, data: formData });
+    }
+  };
+
+  const toggleActive = async (template: any) => {
+    try {
+      await api.put(`/api/templates/${template.id}`, {
+        is_active: !template.is_active,
+      });
+      queryClient.invalidateQueries({ queryKey: ['templates'] });
+    } catch (error) {
+      console.error('Error toggling template:', error);
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex justify-between mb-4">
+        <h2 className="text-lg font-semibold">Deal Templates</h2>
+        <p className="text-sm text-gray-500">
+          Шаблоны создаются на странице создания сделки
+        </p>
+      </div>
+
+      <div className="bg-white shadow rounded-lg overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Currencies</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {templates?.map((template: any) => (
+              <tr key={template.id} className={!template.is_active ? 'bg-gray-50 opacity-60' : ''}>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{template.id}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  <div className="font-medium">{template.name}</div>
+                  {template.description && (
+                    <div className="text-xs text-gray-500">{template.description}</div>
+                  )}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  {template.client_sends_currency || '—'} → {template.client_receives_currency || '—'}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  <span className={`px-2 py-1 rounded text-xs ${
+                    template.is_active 
+                      ? 'bg-green-100 text-green-800' 
+                      : 'bg-gray-100 text-gray-800'
+                  }`}>
+                    {template.is_active ? 'Active' : 'Inactive'}
+                  </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  <button
+                    onClick={() => toggleActive(template)}
+                    className="text-blue-600 hover:text-blue-900 mr-3"
+                  >
+                    {template.is_active ? 'Deactivate' : 'Activate'}
+                  </button>
+                  <button
+                    onClick={() => handleEdit(template)}
+                    className="text-indigo-600 hover:text-indigo-900 mr-3"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleDelete(template)}
+                    className="text-red-600 hover:text-red-900"
+                  >
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {(!templates || templates.length === 0) && (
+              <tr>
+                <td colSpan={5} className="px-6 py-4 text-center text-sm text-gray-500">
+                  No templates found. Create templates from the New Deal page.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {isModalOpen && (
+        <Modal
+          title="Edit Template"
+          onClose={() => {
+            setIsModalOpen(false);
+            setEditingTemplate(null);
+          }}
+        >
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Name *</label>
+              <input
+                type="text"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Description</label>
+              <textarea
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                rows={2}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Client Sends Currency</label>
+                <input
+                  type="text"
+                  value={formData.client_sends_currency}
+                  onChange={(e) => setFormData({ ...formData, client_sends_currency: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="USDT"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Client Receives Currency</label>
+                <input
+                  type="text"
+                  value={formData.client_receives_currency}
+                  onChange={(e) => setFormData({ ...formData, client_receives_currency: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="EUR"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end space-x-2">
+              <button
+                onClick={() => {
+                  setIsModalOpen(false);
+                  setEditingTemplate(null);
+                }}
+                className="px-4 py-2 border border-gray-300 rounded-md"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={!formData.name || updateMutation.isPending}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {deleteConfirmOpen && templateToDelete && (
+        <ConfirmDeleteModal
+          title="Delete Template"
+          message={`Are you sure you want to delete template "${templateToDelete.name}"?`}
+          onConfirm={confirmDelete}
+          onCancel={() => {
+            setDeleteConfirmOpen(false);
+            setTemplateToDelete(null);
           }}
           isDeleting={deleteMutation.isPending}
         />

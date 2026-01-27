@@ -751,6 +751,43 @@ def delete_internal_company_account(
     return None
 
 
+class CompanyAccountHistoryResponse(BaseModel):
+    id: int
+    account_id: int
+    previous_balance: float
+    new_balance: float
+    change_amount: float
+    change_type: str
+    transaction_id: Optional[int] = None
+    deal_id: Optional[int] = None
+    comment: Optional[str] = None
+    changed_by: int
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("/internal-company-accounts/{account_id}/history", response_model=List[CompanyAccountHistoryResponse])
+def get_company_account_history(
+    account_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Получить историю изменений баланса фиатного счёта компании"""
+    from app.models.internal_company_account_history import InternalCompanyAccountHistory
+    
+    account = db.query(InternalCompanyAccount).filter(InternalCompanyAccount.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Internal company account not found")
+    
+    history = db.query(InternalCompanyAccountHistory).filter(
+        InternalCompanyAccountHistory.account_id == account_id
+    ).order_by(InternalCompanyAccountHistory.created_at.desc()).all()
+    
+    return history
+
+
 # ========== Валюты ==========
 class CurrencyCreate(BaseModel):
     code: str

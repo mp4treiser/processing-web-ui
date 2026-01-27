@@ -167,21 +167,194 @@ def get_deal(
     return deal
 
 
-@router.put("/{deal_id}", response_model=DealResponse)
-def update_deal(
+@router.get("/{deal_id}/copy-data")
+def get_deal_copy_data(
     deal_id: int,
-    deal_update: DealUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("exchanges.deals.update"))
+    current_user: User = Depends(get_current_active_user)
 ):
-    """Обновление заявки (Бухгалтер или Директор)"""
+    """Получить данные сделки для копирования"""
     deal = db.query(Deal).filter(Deal.id == deal_id).first()
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
     
-    # Обновляем поля
-    for field, value in deal_update.model_dump(exclude_unset=True).items():
-        setattr(deal, field, value)
+    # Группируем транзакции по client_company_id
+    transactions_grouped = {}
+    for trans in deal.transactions:
+        key = trans.client_company_id or 0
+        if key not in transactions_grouped:
+            transactions_grouped[key] = {
+                "client_company_id": trans.client_company_id,
+                "routes": []
+            }
+        
+        route_data = {
+            "route_type": trans.route_type,
+            "exchange_rate": float(trans.exchange_rate) if trans.exchange_rate else None,
+            "amount_from_account": float(trans.amount_from_account) if trans.amount_from_account else None,
+            # Direct
+            "internal_company_id": trans.internal_company_id,
+            "internal_company_account_id": trans.internal_company_account_id,
+            "bank_commission_id": trans.bank_commission_id,
+            # Exchange
+            "crypto_account_id": trans.crypto_account_id,
+            "exchange_from_currency": trans.exchange_from_currency,
+            "crypto_exchange_rate": float(trans.crypto_exchange_rate) if trans.crypto_exchange_rate else None,
+            "agent_commission_id": trans.agent_commission_id,
+            "exchange_commission_id": trans.exchange_commission_id,
+            "exchange_bank_commission_id": trans.exchange_bank_commission_id,
+            # Partner
+            "partner_company_id": trans.partner_company_id,
+            "partner_commission_id": trans.partner_commission_id,
+            # Partner 50-50
+            "partner_50_50_company_id": trans.partner_50_50_company_id,
+            "partner_50_50_commission_id": trans.partner_50_50_commission_id,
+        }
+        transactions_grouped[key]["routes"].append(route_data)
+    
+    return {
+        "client_id": deal.client_id,
+        "client_sends_currency": deal.client_sends_currency,
+        "client_receives_currency": deal.client_receives_currency,
+        "transactions": list(transactions_grouped.values())
+    }
+
+
+@router.put("/{deal_id}", response_model=DealResponse)
+def update_deal(
+    deal_id: int,
+    deal_update: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("exchanges.deals.update"))
+):
+    """Полное обновление сделки с транзакциями (Бухгалтер)"""
+    from decimal import Decimal
+    from app.services.deal_calculator import DealCalculator
+    
+    deal = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+    
+    # Проверяем, что сделка в статусе execution
+    if deal.status != DealStatus.EXECUTION.value:
+        raise HTTPException(status_code=400, detail="Deal can only be edited in execution status")
+    
+    # Обновляем основные поля сделки
+    if "client_id" in deal_update:
+        deal.client_id = deal_update["client_id"]
+    if "deal_amount" in deal_update:
+        deal.deal_amount = Decimal(str(deal_update["deal_amount"]))
+        deal.total_eur_request = deal.deal_amount
+    if "client_sends_currency" in deal_update:
+        deal.client_sends_currency = deal_update["client_sends_currency"]
+    if "client_receives_currency" in deal_update:
+        deal.client_receives_currency = deal_update["client_receives_currency"]
+    
+    # Удаляем указанные транзакции
+    deleted_ids = deal_update.get("deleted_transaction_ids", [])
+    if deleted_ids:
+        for trans_id in deleted_ids:
+            trans = db.query(Transaction).filter(
+                Transaction.id == trans_id,
+                Transaction.deal_id == deal_id
+            ).first()
+            if trans and trans.status != TransactionStatus.PAID:
+                db.delete(trans)
+    
+    # Обрабатываем транзакции
+    transactions_data = deal_update.get("transactions", [])
+    calculator = DealCalculator(db)
+    total_client_should_send = Decimal("0")
+    
+    for trans_data in transactions_data:
+        routes = trans_data.get("routes", [])
+        trans_totals = calculator.calculate_transaction_totals(routes)
+        
+        for route in routes:
+            route_calc = calculator.calculate_route_income(route)
+            db_id = route.get("db_id")
+            
+            if db_id:
+                # Обновляем существующую транзакцию
+                db_trans = db.query(Transaction).filter(
+                    Transaction.id == db_id,
+                    Transaction.deal_id == deal_id
+                ).first()
+                
+                if db_trans and db_trans.status != TransactionStatus.PAID:
+                    # Обновляем поля
+                    db_trans.route_type = route.get("route_type")
+                    db_trans.exchange_rate = Decimal(str(route.get("exchange_rate", 0))) if route.get("exchange_rate") else None
+                    db_trans.client_company_id = trans_data.get("client_company_id")
+                    db_trans.amount_for_client = Decimal(str(route.get("amount_from_account", 0))) if route.get("amount_from_account") else None
+                    # Direct
+                    db_trans.internal_company_id = route.get("internal_company_id")
+                    db_trans.internal_company_account_id = route.get("internal_company_account_id")
+                    db_trans.amount_from_account = Decimal(str(route.get("amount_from_account", 0))) if route.get("amount_from_account") else None
+                    db_trans.bank_commission_id = route.get("bank_commission_id")
+                    # Exchange
+                    db_trans.crypto_account_id = route.get("crypto_account_id")
+                    db_trans.exchange_from_currency = route.get("exchange_from_currency")
+                    db_trans.exchange_amount = Decimal(str(route.get("exchange_amount", 0))) if route.get("exchange_amount") else None
+                    db_trans.crypto_exchange_rate = Decimal(str(route.get("crypto_exchange_rate", 0))) if route.get("crypto_exchange_rate") else None
+                    db_trans.agent_commission_id = route.get("agent_commission_id")
+                    db_trans.exchange_commission_id = route.get("exchange_commission_id")
+                    db_trans.exchange_bank_commission_id = route.get("exchange_bank_commission_id")
+                    # Partner
+                    db_trans.partner_company_id = route.get("partner_company_id")
+                    db_trans.amount_to_partner_usdt = route_calc.get("amount_to_partner_usdt")
+                    db_trans.amount_partner_sends = route_calc.get("amount_partner_sends")
+                    db_trans.partner_commission_id = route.get("partner_commission_id")
+                    # Partner 50-50
+                    db_trans.partner_50_50_company_id = route.get("partner_50_50_company_id")
+                    db_trans.amount_to_partner_50_50_usdt = route_calc.get("amount_to_partner_50_50_usdt")
+                    db_trans.amount_partner_50_50_sends = route_calc.get("amount_partner_50_50_sends")
+                    db_trans.partner_50_50_commission_id = route.get("partner_50_50_commission_id")
+                    # Calculated
+                    db_trans.calculated_route_income = route_calc.get("calculated_route_income")
+                    db_trans.final_income = route_calc.get("calculated_route_income")
+            else:
+                # Создаём новую транзакцию
+                db_trans = Transaction(
+                    deal_id=deal_id,
+                    route_type=route.get("route_type"),
+                    exchange_rate=Decimal(str(route.get("exchange_rate", 0))) if route.get("exchange_rate") else None,
+                    client_company_id=trans_data.get("client_company_id"),
+                    amount_for_client=Decimal(str(route.get("amount_from_account", 0))) if route.get("amount_from_account") else None,
+                    # Direct
+                    internal_company_id=route.get("internal_company_id"),
+                    internal_company_account_id=route.get("internal_company_account_id"),
+                    amount_from_account=Decimal(str(route.get("amount_from_account", 0))) if route.get("amount_from_account") else None,
+                    bank_commission_id=route.get("bank_commission_id"),
+                    # Exchange
+                    crypto_account_id=route.get("crypto_account_id"),
+                    exchange_from_currency=route.get("exchange_from_currency"),
+                    exchange_amount=Decimal(str(route.get("exchange_amount", 0))) if route.get("exchange_amount") else None,
+                    crypto_exchange_rate=Decimal(str(route.get("crypto_exchange_rate", 0))) if route.get("crypto_exchange_rate") else None,
+                    agent_commission_id=route.get("agent_commission_id"),
+                    exchange_commission_id=route.get("exchange_commission_id"),
+                    exchange_bank_commission_id=route.get("exchange_bank_commission_id"),
+                    # Partner
+                    partner_company_id=route.get("partner_company_id"),
+                    amount_to_partner_usdt=route_calc.get("amount_to_partner_usdt"),
+                    amount_partner_sends=route_calc.get("amount_partner_sends"),
+                    partner_commission_id=route.get("partner_commission_id"),
+                    # Partner 50-50
+                    partner_50_50_company_id=route.get("partner_50_50_company_id"),
+                    amount_to_partner_50_50_usdt=route_calc.get("amount_to_partner_50_50_usdt"),
+                    amount_partner_50_50_sends=route_calc.get("amount_partner_50_50_sends"),
+                    partner_50_50_commission_id=route.get("partner_50_50_commission_id"),
+                    # Calculated
+                    calculated_route_income=route_calc.get("calculated_route_income"),
+                    final_income=route_calc.get("calculated_route_income"),
+                    status=TransactionStatus.PENDING
+                )
+                db.add(db_trans)
+        
+        total_client_should_send += trans_totals["final_income"]
+    
+    # Обновляем итоговую сумму
+    deal.total_usdt_calculated = total_client_should_send
     
     db.commit()
     db.refresh(deal)
@@ -271,12 +444,12 @@ def confirm_client_payment(
     if is_partial and client_paid_amount < deal.total_eur_request:
         # Частичная оплата - есть задолженность
         deal.client_debt_amount = deal.total_eur_request - client_paid_amount
-        deal.is_client_debt = "true"
+        deal.is_client_debt = True
         deal.status = DealStatus.CLIENT_PARTIALLY_PAID.value
     else:
         # Полная оплата
         deal.client_debt_amount = Decimal("0")
-        deal.is_client_debt = "false"
+        deal.is_client_debt = False
         deal.status = DealStatus.EXECUTION.value
     
     db.commit()
@@ -300,7 +473,7 @@ def pay_debt(
     if current_user.role == UserRole.MANAGER and deal.manager_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     
-    if deal.is_client_debt != "true" or deal.client_debt_amount <= 0:
+    if not deal.is_client_debt or deal.client_debt_amount <= 0:
         raise HTTPException(
             status_code=400,
             detail="Deal has no debt to pay"
@@ -322,7 +495,7 @@ def pay_debt(
     # Если задолженность полностью погашена
     if deal.client_debt_amount <= 0:
         deal.client_debt_amount = Decimal("0")
-        deal.is_client_debt = "false"
+        deal.is_client_debt = False
         # Если сделка была в статусе частичной оплаты и теперь полностью оплачена
         if deal.status == DealStatus.CLIENT_PARTIALLY_PAID.value:
             deal.status = DealStatus.EXECUTION.value

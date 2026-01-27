@@ -128,19 +128,133 @@ def mark_transaction_paid(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("exchanges.transactions.execute"))
 ):
-    """Отметить транзакцию как оплаченную (Бухгалтер)"""
+    """Отметить транзакцию как оплаченную (Бухгалтер) и списать баланс с записью истории"""
+    from datetime import datetime
+    from decimal import Decimal
+    from app.models.internal_company_account import InternalCompanyAccount
+    from app.models.account_balance import AccountBalance
+    from app.models.internal_company_account_history import InternalCompanyAccountHistory, CompanyBalanceChangeType
+    from app.models.account_balance_history import AccountBalanceHistory, BalanceChangeType
+    
     transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
     
+    # Предотвращаем повторную оплату
+    if transaction.status == TransactionStatus.PAID:
+        raise HTTPException(status_code=400, detail="Transaction already paid")
+    
+    # Получаем сделку для записи в историю
+    deal = db.query(Deal).filter(Deal.id == transaction.deal_id).first()
+    
+    # Списываем баланс в зависимости от типа маршрута
+    if transaction.route_type == "direct" and transaction.internal_company_account_id:
+        # Прямой перевод - списываем с фиатного счёта компании
+        account = db.query(InternalCompanyAccount).filter(
+            InternalCompanyAccount.id == transaction.internal_company_account_id
+        ).first()
+        if account and transaction.amount_from_account:
+            previous_balance = account.balance
+            amount_to_deduct = Decimal(str(transaction.amount_from_account))
+            account.balance = previous_balance - amount_to_deduct
+            
+            # Записываем историю
+            history = InternalCompanyAccountHistory(
+                account_id=account.id,
+                previous_balance=previous_balance,
+                new_balance=account.balance,
+                change_amount=-amount_to_deduct,
+                change_type=CompanyBalanceChangeType.AUTO,
+                transaction_id=transaction.id,
+                deal_id=deal.id if deal else None,
+                changed_by=current_user.id,
+                comment=f"Оплата маршрута (Direct) по сделке #{deal.id if deal else 'N/A'}"
+            )
+            db.add(history)
+    
+    elif transaction.route_type == "exchange" and transaction.crypto_account_id:
+        # Биржа - списываем с крипто-счёта
+        crypto_account = db.query(AccountBalance).filter(
+            AccountBalance.id == transaction.crypto_account_id
+        ).first()
+        if crypto_account:
+            # Используем exchange_amount если есть, иначе рассчитываем
+            amount_to_deduct = transaction.exchange_amount
+            if not amount_to_deduct and transaction.amount_from_account and transaction.crypto_exchange_rate:
+                amount_to_deduct = Decimal(str(transaction.amount_from_account)) * Decimal(str(transaction.crypto_exchange_rate))
+            if amount_to_deduct:
+                previous_balance = crypto_account.balance
+                crypto_account.balance = previous_balance - Decimal(str(amount_to_deduct))
+                
+                # Записываем историю
+                history = AccountBalanceHistory(
+                    account_balance_id=crypto_account.id,
+                    previous_balance=previous_balance,
+                    new_balance=crypto_account.balance,
+                    change_amount=-Decimal(str(amount_to_deduct)),
+                    change_type=BalanceChangeType.AUTO,
+                    transaction_id=transaction.id,
+                    deal_id=deal.id if deal else None,
+                    changed_by=current_user.id,
+                    comment=f"Оплата маршрута (Exchange) по сделке #{deal.id if deal else 'N/A'}"
+                )
+                db.add(history)
+    
+    elif transaction.route_type == "partner" and transaction.amount_to_partner_usdt:
+        # Партнёр - списываем USDT с крипто-счёта (ищем USDT счёт)
+        usdt_account = db.query(AccountBalance).filter(
+            AccountBalance.currency == "USDT"
+        ).first()
+        if usdt_account:
+            previous_balance = usdt_account.balance
+            amount_to_deduct = Decimal(str(transaction.amount_to_partner_usdt))
+            usdt_account.balance = previous_balance - amount_to_deduct
+            
+            # Записываем историю
+            history = AccountBalanceHistory(
+                account_balance_id=usdt_account.id,
+                previous_balance=previous_balance,
+                new_balance=usdt_account.balance,
+                change_amount=-amount_to_deduct,
+                change_type=BalanceChangeType.AUTO,
+                transaction_id=transaction.id,
+                deal_id=deal.id if deal else None,
+                changed_by=current_user.id,
+                comment=f"Оплата партнёру (Partner) по сделке #{deal.id if deal else 'N/A'}"
+            )
+            db.add(history)
+    
+    elif transaction.route_type == "partner_50_50" and transaction.amount_to_partner_50_50_usdt:
+        # Партнёр 50-50 - списываем USDT с крипто-счёта
+        usdt_account = db.query(AccountBalance).filter(
+            AccountBalance.currency == "USDT"
+        ).first()
+        if usdt_account:
+            previous_balance = usdt_account.balance
+            amount_to_deduct = Decimal(str(transaction.amount_to_partner_50_50_usdt))
+            usdt_account.balance = previous_balance - amount_to_deduct
+            
+            # Записываем историю
+            history = AccountBalanceHistory(
+                account_balance_id=usdt_account.id,
+                previous_balance=previous_balance,
+                new_balance=usdt_account.balance,
+                change_amount=-amount_to_deduct,
+                change_type=BalanceChangeType.AUTO,
+                transaction_id=transaction.id,
+                deal_id=deal.id if deal else None,
+                changed_by=current_user.id,
+                comment=f"Оплата партнёру 50-50 по сделке #{deal.id if deal else 'N/A'}"
+            )
+            db.add(history)
+    
+    # Обновляем статус транзакции
     transaction.status = TransactionStatus.PAID
     if payment_proof_file:
         transaction.payment_proof_file = payment_proof_file
-    from datetime import datetime
     transaction.paid_at = datetime.utcnow()
     
     # Проверяем, все ли транзакции оплачены
-    deal = db.query(Deal).filter(Deal.id == transaction.deal_id).first()
     all_transactions = db.query(Transaction).filter(Transaction.deal_id == deal.id).all()
     if all(t.status == TransactionStatus.PAID for t in all_transactions):
         deal.status = DealStatus.COMPLETED.value

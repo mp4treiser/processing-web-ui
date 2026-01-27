@@ -55,6 +55,13 @@ PERMISSIONS: Dict[str, List[UserRole]] = {
     "balances.read": [UserRole.ACCOUNTANT, UserRole.DIRECTOR],
     "balances.write": [UserRole.ACCOUNTANT, UserRole.DIRECTOR],
     "balances.history.read": [UserRole.ACCOUNTANT, UserRole.DIRECTOR],
+    
+    # ========== Шаблоны сделок (Templates) ==========
+    
+    "exchanges.templates.read": [UserRole.MANAGER, UserRole.SENIOR_MANAGER, UserRole.ACCOUNTANT, UserRole.DIRECTOR],
+    "exchanges.templates.create": [UserRole.SENIOR_MANAGER, UserRole.ACCOUNTANT, UserRole.DIRECTOR],
+    "exchanges.templates.update": [UserRole.SENIOR_MANAGER, UserRole.ACCOUNTANT, UserRole.DIRECTOR],
+    "exchanges.templates.delete": [UserRole.SENIOR_MANAGER, UserRole.ACCOUNTANT, UserRole.DIRECTOR],
 }
 
 # Директор имеет все права по умолчанию

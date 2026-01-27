@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { TransactionForm } from './TransactionForm';
@@ -32,6 +32,20 @@ interface Transaction {
   recipient_details?: string;
 }
 
+interface DealTemplate {
+  id: number;
+  name: string;
+  description: string | null;
+  client_sends_currency: string | null;
+  client_receives_currency: string | null;
+  routes_config: {
+    transactions: Array<{
+      client_company_id?: number;
+      routes: Route[];
+    }>;
+  };
+}
+
 // Интерфейсы Route и TransactionRoute определены в RouteBuilder.tsx
 // Используем их через импорт или определяем здесь для совместимости
 interface Route {
@@ -51,6 +65,8 @@ interface TransactionRoute {
 
 export function NewDeal() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const copyFromId = searchParams.get('copy_from');
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const [clientId, setClientId] = useState<number | ''>('');
@@ -66,6 +82,9 @@ export function NewDeal() {
   const [clientReceivesCurrency, setClientReceivesCurrency] = useState<string>('');
   const [routeTransactions, setRouteTransactions] = useState<TransactionRoute[]>([]);
   const [selectedAccounts, setSelectedAccounts] = useState<Array<{account_id: number; amount: number; currency: string}>>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | ''>('');
+  const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false);
+  const [templateName, setTemplateName] = useState('');
 
   const { data: clients } = useQuery<Client[]>({
     queryKey: ['reference-clients'],
@@ -79,6 +98,117 @@ export function NewDeal() {
       }
     },
   });
+
+  // Загружаем шаблоны
+  const { data: templates } = useQuery<DealTemplate[]>({
+    queryKey: ['templates'],
+    queryFn: async () => {
+      const response = await api.get('/api/templates');
+      return response.data;
+    },
+  });
+
+  // Загружаем данные для копирования
+  const { data: copyData } = useQuery({
+    queryKey: ['deal-copy-data', copyFromId],
+    queryFn: async () => {
+      if (!copyFromId) return null;
+      const response = await api.get(`/api/deals/${copyFromId}/copy-data`);
+      return response.data;
+    },
+    enabled: !!copyFromId,
+  });
+
+  // Применяем данные копирования
+  useEffect(() => {
+    if (copyData) {
+      setClientId(copyData.client_id || '');
+      setClientSendsCurrency(copyData.client_sends_currency || '');
+      setClientReceivesCurrency(copyData.client_receives_currency || '');
+      if (copyData.transactions && copyData.transactions.length > 0) {
+        const converted = copyData.transactions.map((t: any) => ({
+          client_company_id: t.client_company_id || 0,
+          amount_for_client: 0,
+          routes: t.routes.map((r: any) => ({
+            ...r,
+            id: `route-${Date.now()}-${Math.random()}`,
+          })),
+        }));
+        setRouteTransactions(converted);
+      }
+    }
+  }, [copyData]);
+
+  // Применяем шаблон
+  const handleApplyTemplate = (templateId: number) => {
+    const template = templates?.find(t => t.id === templateId);
+    if (!template) return;
+    
+    setClientSendsCurrency(template.client_sends_currency || '');
+    setClientReceivesCurrency(template.client_receives_currency || '');
+    
+    if (template.routes_config?.transactions) {
+      const converted = template.routes_config.transactions.map((t: any) => ({
+        client_company_id: t.client_company_id || 0,
+        amount_for_client: 0,
+        routes: t.routes.map((r: any) => ({
+          ...r,
+          id: `route-${Date.now()}-${Math.random()}`,
+        })),
+      }));
+      setRouteTransactions(converted);
+    }
+  };
+
+  // Сохранение как шаблон
+  const saveTemplateMutation = useMutation({
+    mutationFn: async (data: { name: string; routes_config: any }) => {
+      const response = await api.post('/api/templates', {
+        name: data.name,
+        client_sends_currency: clientSendsCurrency,
+        client_receives_currency: clientReceivesCurrency,
+        routes_config: data.routes_config,
+      });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['templates'] });
+      setShowSaveTemplateModal(false);
+      setTemplateName('');
+      alert('Шаблон сохранён!');
+    },
+  });
+
+  const handleSaveAsTemplate = () => {
+    if (!templateName.trim()) {
+      alert('Введите название шаблона');
+      return;
+    }
+    
+    const routesConfig = {
+      transactions: routeTransactions.map(t => ({
+        client_company_id: t.client_company_id,
+        routes: t.routes.map(r => ({
+          route_type: r.route_type,
+          exchange_rate: r.exchange_rate,
+          internal_company_id: r.internal_company_id,
+          internal_company_account_id: r.internal_company_account_id,
+          bank_commission_id: r.bank_commission_id,
+          crypto_account_id: r.crypto_account_id,
+          exchange_from_currency: r.exchange_from_currency,
+          agent_commission_id: r.agent_commission_id,
+          exchange_commission_id: r.exchange_commission_id,
+          exchange_bank_commission_id: r.exchange_bank_commission_id,
+          partner_company_id: r.partner_company_id,
+          partner_commission_id: r.partner_commission_id,
+          partner_50_50_company_id: r.partner_50_50_company_id,
+          partner_50_50_commission_id: r.partner_50_50_commission_id,
+        })),
+      })),
+    };
+    
+    saveTemplateMutation.mutate({ name: templateName, routes_config: routesConfig });
+  };
 
   // Загружаем компании выбранного клиента
   const { data: companies } = useQuery<Company[]>({
@@ -318,7 +448,45 @@ export function NewDeal() {
   return (
     <div className="w-screen relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] px-3 py-2">
       <div className="max-w-full">
-        <h1 className="text-lg font-bold text-gray-900 mb-2">Create New Deal</h1>
+        <div className="flex justify-between items-center mb-2">
+          <h1 className="text-lg font-bold text-gray-900">
+            {copyFromId ? `Копирование сделки #${copyFromId}` : 'Создание новой сделки'}
+          </h1>
+          {user?.role === 'accountant' && routeTransactions.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowSaveTemplateModal(true)}
+              className="px-3 py-1 text-xs bg-gray-600 text-white rounded-md hover:bg-gray-700"
+            >
+              Сохранить как шаблон
+            </button>
+          )}
+        </div>
+
+        {/* Выбор шаблона для бухгалтера */}
+        {user?.role === 'accountant' && templates && templates.length > 0 && !copyFromId && (
+          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-2 mb-2">
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-medium text-indigo-800">Шаблон:</label>
+              <select
+                value={selectedTemplateId}
+                onChange={(e) => {
+                  const id = Number(e.target.value);
+                  setSelectedTemplateId(id || '');
+                  if (id) handleApplyTemplate(id);
+                }}
+                className="flex-1 px-2 py-1 text-xs border border-indigo-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+              >
+                <option value="">— Выберите шаблон или настройте вручную —</option>
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} {t.description ? `(${t.description})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
         
         {/* Блок остатков компаний для бухгалтера */}
         {user?.role === 'accountant' && <CompanyBalancesDisplay showProjected={true} selectedAccounts={selectedAccounts} />}
@@ -567,18 +735,59 @@ export function NewDeal() {
             onClick={() => navigate(-1)}
             className="px-3 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
           >
-            Cancel
+            Отмена
           </button>
           <button
             type="submit"
             disabled={createMutation.isPending}
             className="px-3 py-1 text-xs bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
           >
-            {createMutation.isPending ? 'Creating...' : 'Create Deal'}
+            {createMutation.isPending ? 'Создание...' : 'Создать сделку'}
           </button>
         </div>
       </form>
       </div>
+
+      {/* Модальное окно сохранения шаблона */}
+      {showSaveTemplateModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h2 className="text-lg font-bold mb-4">Сохранить как шаблон</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Название шаблона *</label>
+                <input
+                  type="text"
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="Например: Стандартный обмен EUR->USDT"
+                />
+              </div>
+              <div className="flex justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSaveTemplateModal(false);
+                    setTemplateName('');
+                  }}
+                  className="px-4 py-2 border border-gray-300 rounded-md"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveAsTemplate}
+                  disabled={!templateName.trim() || saveTemplateMutation.isPending}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {saveTemplateMutation.isPending ? 'Сохранение...' : 'Сохранить'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

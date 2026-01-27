@@ -67,53 +67,48 @@ export function CompanyBalancesDisplay({ showProjected = false, selectedAccounts
   let projected = balancesData.projected;
 
   // Рассчитываем изменения балансов на основе выбранных счетов
-  console.log('[CompanyBalancesDisplay] Received selectedAccounts:', selectedAccounts, 'length:', selectedAccounts?.length);
+  // ВАЖНО: разделяем изменения для фиатных счетов компаний и крипто, чтобы ID не смешивались
   if (selectedAccounts && selectedAccounts.length > 0) {
-    const accountChanges: Record<number, number> = {};
+    // Определяем криптовалюты
+    const cryptoCurrencies = ['BTC', 'ETH', 'USDT', 'USDC', 'BNB', 'SOL', 'ADA', 'DOT', 'MATIC', 'AVAX', 'LINK', 'UNI', 'ATOM', 'XRP', 'DOGE', 'LTC', 'BCH', 'XLM', 'ALGO', 'VET', 'TRX', 'EOS', 'AAVE', 'MKR', 'COMP', 'SNX', 'SUSHI', 'CRV', 'YFI', '1INCH'];
+    
+    // Разделяем изменения на фиатные и крипто
+    const companyAccountChanges: Record<number, number> = {};  // Для InternalCompanyAccount
+    const cryptoAccountChanges: Record<number, number> = {};   // Для AccountBalance (крипто)
+    
     selectedAccounts.forEach(acc => {
       const accountId = Number(acc.account_id);
       const amount = Number(acc.amount);
-      console.log('[CompanyBalancesDisplay] Processing account:', { accountId, amount, original: acc });
+      
       if (!isNaN(accountId) && !isNaN(amount)) {
-        if (!accountChanges[accountId]) {
-          accountChanges[accountId] = 0;
+        const isCrypto = cryptoCurrencies.includes(acc.currency?.toUpperCase() || '');
+        
+        if (isCrypto) {
+          // Крипто счёт (AccountBalance)
+          if (!cryptoAccountChanges[accountId]) {
+            cryptoAccountChanges[accountId] = 0;
+          }
+          cryptoAccountChanges[accountId] += amount;
+        } else {
+          // Фиатный счёт (InternalCompanyAccount)
+          if (!companyAccountChanges[accountId]) {
+            companyAccountChanges[accountId] = 0;
+          }
+          companyAccountChanges[accountId] += amount;
         }
-        accountChanges[accountId] += amount;
-        console.log('[CompanyBalancesDisplay] Account change updated:', { accountId, totalChange: accountChanges[accountId] });
-      } else {
-        console.warn('[CompanyBalancesDisplay] Invalid account data:', { accountId, amount, acc });
       }
     });
-    
-    console.log('[CompanyBalancesDisplay] Final accountChanges:', accountChanges);
-    console.log('[CompanyBalancesDisplay] AccountChanges keys (as numbers):', Object.keys(accountChanges).map(k => Number(k)));
 
     // Создаём проекцию с учётом выбранных счетов
-    // Применяем изменения к projected балансам (которые уже включают изменения от сохраненных сделок)
-    // и добавляем изменения от текущей создаваемой сделки
     const baseProjected = { ...projected };
-    
-    // Для отладки - логируем изменения
-    console.log('[CompanyBalancesDisplay] Selected accounts:', selectedAccounts);
-    console.log('[CompanyBalancesDisplay] Account changes:', accountChanges);
-    console.log('[CompanyBalancesDisplay] Current crypto balances:', current.crypto_balances.map(c => ({ account_id: c.account_id, account_idType: typeof c.account_id, name: c.account_name, currency: c.currency, balance: c.balance })));
-    console.log('[CompanyBalancesDisplay] Base projected crypto balances:', baseProjected.crypto_balances.map(c => ({ account_id: c.account_id, account_idType: typeof c.account_id, name: c.account_name, currency: c.currency, balance: c.balance })));
-    
-    // Проверяем соответствие ID
-    const selectedAccountIds = selectedAccounts.map(a => Number(a.account_id));
-    const cryptoAccountIds = current.crypto_balances.map(c => c.account_id);
-    console.log('[CompanyBalancesDisplay] ID matching check:', {
-      selectedAccountIds,
-      cryptoAccountIds,
-      matchingIds: selectedAccountIds.filter(id => cryptoAccountIds.includes(id)),
-      missingIds: selectedAccountIds.filter(id => !cryptoAccountIds.includes(id))
-    });
     
     projected = {
       ...projected,
+      // Применяем изменения к фиатным счетам компаний
       companies: baseProjected.companies.map(company => {
         const updatedAccounts = company.accounts.map(account => {
-          const change = accountChanges[account.id] || 0;
+          // Используем companyAccountChanges для фиатных счетов
+          const change = companyAccountChanges[account.id] || 0;
           const newBalance = account.balance + change;
           return {
             ...account,
@@ -129,39 +124,12 @@ export function CompanyBalancesDisplay({ showProjected = false, selectedAccounts
           total_balance: newTotal
         };
       }),
-      crypto_balances: current.crypto_balances.map(crypto => {
-        // Находим соответствующий баланс в projected (если есть изменения от других сделок)
-        const projectedCrypto = baseProjected.crypto_balances.find(c => c.account_id === crypto.account_id);
-        
-        // Базовый баланс: используем projected если есть (уже включает изменения от других сделок),
-        // иначе используем current (текущий баланс без изменений)
-        // ВАЖНО: конвертируем в число, так как может прийти строка из API
-        const baseBalance = Number(projectedCrypto ? projectedCrypto.balance : crypto.balance);
-        
-        // Применяем изменения от выбранных счетов (текущая создаваемая сделка)
-        // Ищем изменения по account_id (который равен id из AccountBalance)
-        const change = Number(accountChanges[crypto.account_id] ?? 0);
+      // Применяем изменения к крипто счетам
+      crypto_balances: baseProjected.crypto_balances.map(crypto => {
+        // Используем cryptoAccountChanges для крипто счетов
+        const baseBalance = Number(crypto.balance);
+        const change = Number(cryptoAccountChanges[crypto.account_id] ?? 0);
         const newBalance = baseBalance + change;
-        
-        // Для отладки - логируем все crypto accounts и их изменения
-        console.log(`[Balance Calc] Crypto account ${crypto.account_id} (${crypto.account_name}):`, {
-          account_id: crypto.account_id,
-          currentBalance: crypto.balance,
-          currentBalanceType: typeof crypto.balance,
-          currentBalanceAsNumber: Number(crypto.balance),
-          projectedBalance: projectedCrypto?.balance,
-          projectedBalanceType: typeof projectedCrypto?.balance,
-          projectedBalanceAsNumber: projectedCrypto ? Number(projectedCrypto.balance) : null,
-          baseBalance,
-          baseBalanceType: typeof baseBalance,
-          change,
-          changeType: typeof change,
-          accountChangesForThisId: accountChanges[crypto.account_id],
-          accountChangesForThisIdType: typeof accountChanges[crypto.account_id],
-          newBalance,
-          newBalanceType: typeof newBalance,
-          calculation: `${baseBalance} + ${change} = ${newBalance}`
-        });
         
         return {
           ...crypto,
@@ -258,21 +226,6 @@ export function CompanyBalancesDisplay({ showProjected = false, selectedAccounts
               );
             })}
           </div>
-          <div className="mt-1 p-1.5 bg-gray-50 rounded text-xs">
-            <div className="flex justify-between items-center">
-              <span className="font-medium">Total:</span>
-              <div className="flex items-center space-x-1">
-                <span className="text-gray-700">
-                  {formatFiat(current.total_company_balance)}
-                </span>
-                {showProjected && (
-                  <span className={Math.abs(projected.total_company_balance - current.total_company_balance) > 0.01 ? 'text-orange-600 font-semibold' : 'text-blue-600'}>
-                    → {formatFiat(projected.total_company_balance)}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
         </div>
 
         {/* Правая колонка: Crypto Balances */}
@@ -304,21 +257,6 @@ export function CompanyBalancesDisplay({ showProjected = false, selectedAccounts
                   </div>
                 );
               })}
-            </div>
-            <div className="mt-1 p-1.5 bg-gray-50 rounded text-xs">
-              <div className="flex justify-between items-center">
-                <span className="font-medium">Total:</span>
-                <div className="flex items-center space-x-1">
-                  <span className="text-gray-700">
-                    {formatCrypto(current.total_crypto_balance)}
-                  </span>
-                  {showProjected && (
-                    <span className={Math.abs(projected.total_crypto_balance - current.total_crypto_balance) > 0.0001 ? 'text-orange-600 font-semibold' : 'text-blue-600'}>
-                      → {formatCrypto(projected.total_crypto_balance)}
-                    </span>
-                  )}
-                </div>
-              </div>
             </div>
           </div>
         )}

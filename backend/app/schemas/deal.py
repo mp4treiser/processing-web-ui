@@ -50,7 +50,7 @@ class DealResponse(DealBase):
     approved_by_senior_manager_at: datetime | None = None
     client_debt_amount: Decimal | None = None
     client_paid_amount: Decimal | None = None
-    is_client_debt: str | None = None
+    is_client_debt: bool = False
     client_payment_confirmed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime

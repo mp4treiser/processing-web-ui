@@ -10,7 +10,6 @@ from app.core.database import SessionLocal
 from app.core.security import get_password_hash
 from app.models.user import User, UserRole
 from app.models.client import Client
-from app.models.partner import Partner
 
 
 def seed_data():
@@ -36,6 +35,12 @@ def seed_data():
                 "password": "director123",
                 "full_name": "ФинДиректор Тестовый",
                 "role": UserRole.DIRECTOR
+            },
+            {
+                "email": "senior@test.com",
+                "password": "senior123",
+                "full_name": "Старший Менеджер Тестовый",
+                "role": UserRole.SENIOR_MANAGER
             }
         ]
         
@@ -62,19 +67,6 @@ def seed_data():
             if not existing:
                 client = Client(**client_data)
                 db.add(client)
-        
-        # Создаем партнеров
-        partners_data = [
-            {"name": "Партнер 1", "partner_type": "supply"},
-            {"name": "Партнер 2", "partner_type": "split"},
-            {"name": "Биржа", "partner_type": "exchange"},
-        ]
-        
-        for partner_data in partners_data:
-            existing = db.query(Partner).filter(Partner.name == partner_data["name"]).first()
-            if not existing:
-                partner = Partner(**partner_data)
-                db.add(partner)
         
         db.commit()
         print("✅ Seed data created successfully!")

@@ -2,13 +2,6 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { api } from '../lib/api';
 
-interface Currency {
-  id: number;
-  code: string;
-  name: string;
-  is_crypto: boolean;
-}
-
 interface Company {
   id: number;
   name: string;
@@ -122,14 +115,6 @@ interface RouteBuilderProps {
 
 export function RouteBuilder({ clientId, transactions, onUpdate, dealAmount, clientSendsCurrency, clientReceivesCurrency, onSelectedAccountsChange }: RouteBuilderProps) {
   // Загружаем справочники
-  const { data: currencies } = useQuery<Currency[]>({
-    queryKey: ['reference-currencies'],
-    queryFn: async () => {
-      const response = await api.get('/api/reference/currencies');
-      return response.data;
-    },
-  });
-
   const { data: clientCompanies } = useQuery<Company[]>({
     queryKey: ['reference-companies', clientId],
     queryFn: async () => {
@@ -473,6 +458,14 @@ export function RouteBuilder({ clientId, transactions, onUpdate, dealAmount, cli
     
     if (field === 'partner_50_50_company_id') {
       updated[transactionIndex].routes[routeIndex].partner_50_50_account_id = undefined;
+    }
+
+    // При выборе крипто-счёта автоматически устанавливаем его валюту
+    if (field === 'crypto_account_id' && value) {
+      const selectedCryptoAccount = cryptoBalances?.find(acc => acc.id === value);
+      if (selectedCryptoAccount?.currency) {
+        updated[transactionIndex].routes[routeIndex].exchange_from_currency = selectedCryptoAccount.currency;
+      }
     }
 
     // Автоматически подставляем комиссию по умолчанию
@@ -1003,19 +996,15 @@ export function RouteBuilder({ clientId, transactions, onUpdate, dealAmount, cli
 
                       <div>
                         <label className="block text-xs font-medium mb-0.5">Exchange From Currency *</label>
-                        <select
+                        {/* Валюта автоматически берётся из выбранного счёта */}
+                        <input
+                          type="text"
                           value={route.exchange_from_currency || ''}
-                          onChange={(e) => updateRoute(index, routeIndex, 'exchange_from_currency', e.target.value)}
-                          className="w-full px-2 py-1 text-xs border border-gray-300 rounded-md"
-                          required
-                        >
-                          <option value="">Select currency</option>
-                          {currencies?.filter(c => c.is_crypto).map((curr) => (
-                            <option key={curr.id} value={curr.code}>
-                              {curr.code}
-                            </option>
-                          ))}
-                        </select>
+                          readOnly
+                          className="w-full px-2 py-1 text-xs border border-gray-300 rounded-md bg-gray-100"
+                          placeholder="Select crypto account first"
+                        />
+                        <p className="text-xs text-gray-500 mt-0.5">Auto-filled from selected account</p>
                       </div>
 
                       <div>

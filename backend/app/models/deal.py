@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Numeric, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Numeric, DateTime, ForeignKey, Text, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum
@@ -15,12 +15,6 @@ class DealStatus(str, enum.Enum):
     CLIENT_PARTIALLY_PAID = "client_partially_paid"
     EXECUTION = "execution"
     COMPLETED = "completed"
-    # Старые статусы для обратной совместимости (можно удалить после миграции)
-    CALCULATION_PENDING = "calculation_pending"
-    DIRECTOR_APPROVAL_PENDING = "director_approval_pending"
-    DIRECTOR_REJECTED = "director_rejected"
-    CLIENT_APPROVAL = "client_approval"
-    AWAITING_PAYMENT = "awaiting_payment"
 
 
 class Deal(Base):
@@ -63,7 +57,7 @@ class Deal(Base):
     # Задолженности клиента
     client_debt_amount = Column(Numeric(15, 2), default=0, nullable=False)
     client_paid_amount = Column(Numeric(15, 2), default=0, nullable=False)
-    is_client_debt = Column(String, default="false")  # Boolean as string for compatibility
+    is_client_debt = Column(Boolean, default=False, nullable=False)
     client_payment_confirmed_at = Column(DateTime, nullable=True)
     
     # Даты

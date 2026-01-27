@@ -172,7 +172,7 @@ def get_dashboard_statistics(
             current += timedelta(days=1)
     
     # Статистика по задолженностям клиентов
-    debt_filters = [Deal.is_client_debt == "true", Deal.client_debt_amount > 0]
+    debt_filters = [Deal.is_client_debt == True, Deal.client_debt_amount > 0]
     if start:
         debt_filters.append(Deal.created_at >= start)
     if end:
