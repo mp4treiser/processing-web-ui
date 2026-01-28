@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 from decimal import Decimal
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 from app.models.deal import DealStatus
 from app.schemas.transaction import TransactionResponse
 
@@ -29,6 +29,23 @@ class DealUpdate(BaseModel):
     partner_share_usdt: Decimal | None = None
     status: str | None = None  # Теперь строка, а не enum
     director_comment: str | None = None
+    client_rate_percent: Decimal | None = None  # Ставка клиента
+
+
+class DealHistoryResponse(BaseModel):
+    """Ответ для истории изменений сделки"""
+    id: int
+    deal_id: int
+    user_id: int
+    user_email: str | None = None
+    user_name: str | None = None
+    action: str
+    changes: dict | None = None
+    comment: str | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class DealResponse(DealBase):
@@ -55,6 +72,15 @@ class DealResponse(DealBase):
     created_at: datetime
     updated_at: datetime
     transactions: List[TransactionResponse] = []
+    # Кто создал сделку
+    created_by_id: int | None = None
+    created_by_email: str | None = None
+    created_by_name: str | None = None
+    # Менеджер
+    manager_email: str | None = None
+    manager_name: str | None = None
+    # История изменений (опционально, для детального просмотра)
+    history: List[DealHistoryResponse] | None = None
 
     class Config:
         from_attributes = True
@@ -76,4 +102,22 @@ class DealListResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class DealIncomeResponse(BaseModel):
+    """Расчёт дохода и прибыли по сделке"""
+    # Клиент отправляет и затраты
+    client_should_send: Decimal  # Клиент отправляет (в валюте отправки)
+    deal_costs: Decimal  # Затраты на сделку = сумма Route Income
+    # Доход и маржа
+    income_amount: Decimal  # Доход в сумме
+    income_percent: Decimal  # Доход в %
+    is_profitable: bool  # Положительный ли доход
+    # Комиссия менеджера
+    manager_commission_percent: Decimal  # % комиссии менеджера
+    manager_commission_amount: Decimal  # Комиссия менеджера в твёрдом эквиваленте
+    # Чистая прибыль = доход - комиссия менеджера
+    net_profit: Decimal
+    # Валюта расчёта
+    currency: str
 

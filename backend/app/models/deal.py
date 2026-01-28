@@ -64,8 +64,13 @@ class Deal(Base):
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
+    # Кто создал сделку (для аудита)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    
     # Relationships
     client = relationship("Client", back_populates="deals")
     manager = relationship("User", foreign_keys=[manager_id], back_populates="deals_managed")
     transactions = relationship("Transaction", back_populates="deal", cascade="all, delete-orphan")
+    history = relationship("DealHistory", back_populates="deal", cascade="all, delete-orphan", order_by="DealHistory.created_at.desc()")
+    created_by_user = relationship("User", foreign_keys=[created_by_id])
 

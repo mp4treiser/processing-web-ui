@@ -28,7 +28,7 @@ interface CompanyAccount {
   is_active: boolean;
 }
 
-type TabType = 'clients' | 'companies' | 'balances' | 'agents' | 'route-commissions' | 'internal-companies' | 'currencies' | 'templates';
+type TabType = 'clients' | 'companies' | 'balances' | 'agents' | 'route-commissions' | 'internal-companies' | 'currencies' | 'templates' | 'manager-commissions' | 'settings';
 
 export function ReferencesPage() {
   const { user } = useAuth();
@@ -42,34 +42,36 @@ export function ReferencesPage() {
   }
   // Агенты и комиссии доступны для senior_manager, accountant, director
   if (user?.role === 'senior_manager' || user?.role === 'accountant' || user?.role === 'director') {
-    availableTabs.push('agents', 'route-commissions', 'internal-companies', 'currencies', 'templates');
+    availableTabs.push('agents', 'route-commissions', 'internal-companies', 'currencies', 'templates', 'manager-commissions', 'settings');
   }
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-6">References</h1>
+      <h1 className="text-2xl font-bold mb-6">Справочники</h1>
 
       {/* Вкладки */}
       <div className="border-b border-gray-200 mb-6">
-        <nav className="-mb-px flex space-x-8">
+        <nav className="-mb-px flex space-x-8 overflow-x-auto">
           {availableTabs.map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`py-4 px-1 border-b-2 font-medium text-sm ${
+              className={`py-4 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${
                 activeTab === tab
                   ? 'border-indigo-500 text-indigo-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
-              {tab === 'clients' && 'Clients'}
-              {tab === 'companies' && 'Companies'}
-              {tab === 'balances' && 'Account Balances'}
-              {tab === 'agents' && 'Agents'}
-              {tab === 'route-commissions' && 'Route Commissions'}
-              {tab === 'internal-companies' && 'Internal Companies'}
-              {tab === 'currencies' && 'Currencies'}
-              {tab === 'templates' && 'Templates'}
+              {tab === 'clients' && 'Клиенты'}
+              {tab === 'companies' && 'Компании'}
+              {tab === 'balances' && 'Остатки по счетам'}
+              {tab === 'agents' && 'Агенты'}
+              {tab === 'route-commissions' && 'Комиссии маршрутов'}
+              {tab === 'internal-companies' && 'Внутренние компании'}
+              {tab === 'currencies' && 'Валюты'}
+              {tab === 'templates' && 'Шаблоны'}
+              {tab === 'manager-commissions' && 'Комиссии менеджеров'}
+              {tab === 'settings' && 'Настройки'}
             </button>
           ))}
         </nav>
@@ -84,6 +86,8 @@ export function ReferencesPage() {
       {activeTab === 'internal-companies' && <InternalCompaniesTab />}
       {activeTab === 'currencies' && <CurrenciesTab />}
       {activeTab === 'templates' && <TemplatesTab />}
+      {activeTab === 'manager-commissions' && <ManagerCommissionsTab />}
+      {activeTab === 'settings' && <SystemSettingsTab />}
     </div>
   );
 }
@@ -2729,6 +2733,300 @@ function TemplatesTab() {
           isDeleting={deleteMutation.isPending}
         />
       )}
+    </div>
+  );
+}
+
+// Вкладка комиссий менеджеров
+interface ManagerCommission {
+  id: number;
+  user_id: number;
+  user_email: string;
+  user_name: string | null;
+  user_role: string;
+  commission_percent: string;
+  is_active: boolean;
+}
+
+function ManagerCommissionsTab() {
+  const queryClient = useQueryClient();
+  const [editingUser, setEditingUser] = useState<number | null>(null);
+  const [newCommission, setNewCommission] = useState<string>('');
+
+  const { data: commissions, isLoading } = useQuery<ManagerCommission[]>({
+    queryKey: ['manager-commissions'],
+    queryFn: async () => {
+      const response = await api.get('/api/reference/manager-commissions');
+      return response.data;
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ userId, commission }: { userId: number; commission: string }) => {
+      const response = await api.put(`/api/reference/manager-commissions/${userId}`, {
+        commission_percent: parseFloat(commission)
+      });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['manager-commissions'] });
+      setEditingUser(null);
+      setNewCommission('');
+    },
+  });
+
+  const handleEdit = (comm: ManagerCommission) => {
+    setEditingUser(comm.user_id);
+    setNewCommission(comm.commission_percent);
+  };
+
+  const handleSave = (userId: number) => {
+    updateMutation.mutate({ userId, commission: newCommission });
+  };
+
+  const getRoleLabel = (role: string) => {
+    const labels: Record<string, string> = {
+      'manager': 'Менеджер',
+      'senior_manager': 'Главный менеджер',
+      'accountant': 'Бухгалтер',
+      'director': 'Директор',
+    };
+    return labels[role] || role;
+  };
+
+  if (isLoading) {
+    return <div className="text-center py-8">Загрузка...</div>;
+  }
+
+  return (
+    <div>
+      <div className="flex justify-between mb-4">
+        <h2 className="text-lg font-semibold">Комиссии менеджеров</h2>
+      </div>
+
+      <div className="bg-white shadow rounded-lg overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Имя</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Роль</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Комиссия %</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Действия</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {commissions?.map((comm) => (
+              <tr key={comm.user_id}>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{comm.user_id}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{comm.user_email}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{comm.user_name || '—'}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  <span className="px-2 py-1 rounded text-xs bg-gray-100">
+                    {getRoleLabel(comm.user_role)}
+                  </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  {editingUser === comm.user_id ? (
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={newCommission}
+                      onChange={(e) => setNewCommission(e.target.value)}
+                      className="w-24 px-2 py-1 border border-gray-300 rounded-md text-sm"
+                      placeholder="%"
+                    />
+                  ) : (
+                    <span className="font-medium">{parseFloat(comm.commission_percent).toFixed(2)}%</span>
+                  )}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  {editingUser === comm.user_id ? (
+                    <>
+                      <button
+                        onClick={() => handleSave(comm.user_id)}
+                        disabled={updateMutation.isPending}
+                        className="text-green-600 hover:text-green-900 mr-3"
+                      >
+                        ✓ Сохранить
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditingUser(null);
+                          setNewCommission('');
+                        }}
+                        className="text-gray-600 hover:text-gray-900"
+                      >
+                        ✗ Отмена
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => handleEdit(comm)}
+                      className="text-indigo-600 hover:text-indigo-900"
+                    >
+                      Редактировать
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {(!commissions || commissions.length === 0) && (
+              <tr>
+                <td colSpan={6} className="px-6 py-4 text-center text-sm text-gray-500">
+                  Нет пользователей
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-4 p-4 bg-blue-50 rounded-lg">
+        <h3 className="text-sm font-medium text-blue-800 mb-2">Пояснение</h3>
+        <p className="text-xs text-blue-700">
+          Комиссия менеджера — это процент от дохода по сделке, который выплачивается менеджеру.
+          Например, если доход по сделке 200 USDT и комиссия менеджера 10%, то менеджер получает 20 USDT.
+          Чистая прибыль = Доход - Комиссия менеджера.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// Вкладка системных настроек
+interface SystemSetting {
+  id: number;
+  key: string;
+  value: string | null;
+  description: string | null;
+}
+
+function SystemSettingsTab() {
+  const queryClient = useQueryClient();
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [newValue, setNewValue] = useState<string>('');
+
+  const { data: settings, isLoading } = useQuery<SystemSetting[]>({
+    queryKey: ['system-settings'],
+    queryFn: async () => {
+      const response = await api.get('/api/reference/settings');
+      return response.data;
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ key, value }: { key: string; value: string }) => {
+      const response = await api.put(`/api/reference/settings/${key}`, { value });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['system-settings'] });
+      queryClient.invalidateQueries({ queryKey: ['default-client-rate'] });
+      setEditingKey(null);
+      setNewValue('');
+    },
+  });
+
+  const handleEdit = (setting: SystemSetting) => {
+    setEditingKey(setting.key);
+    setNewValue(setting.value || '');
+  };
+
+  const handleSave = (key: string) => {
+    updateMutation.mutate({ key, value: newValue });
+  };
+
+  const getSettingLabel = (key: string) => {
+    const labels: Record<string, string> = {
+      'default_client_rate': 'Ставка клиента по умолчанию (%)',
+    };
+    return labels[key] || key;
+  };
+
+  if (isLoading) {
+    return <div className="text-center py-8">Загрузка...</div>;
+  }
+
+  return (
+    <div>
+      <div className="flex justify-between mb-4">
+        <h2 className="text-lg font-semibold">Системные настройки</h2>
+      </div>
+
+      <div className="bg-white shadow rounded-lg overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Параметр</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Значение</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Описание</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Действия</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {settings?.map((setting) => (
+              <tr key={setting.key}>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                  {getSettingLabel(setting.key)}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  {editingKey === setting.key ? (
+                    <input
+                      type="text"
+                      value={newValue}
+                      onChange={(e) => setNewValue(e.target.value)}
+                      className="w-32 px-2 py-1 border border-gray-300 rounded-md text-sm"
+                    />
+                  ) : (
+                    <span className="font-medium">{setting.value || '—'}</span>
+                  )}
+                </td>
+                <td className="px-6 py-4 text-sm text-gray-500">
+                  {setting.description || '—'}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  {editingKey === setting.key ? (
+                    <>
+                      <button
+                        onClick={() => handleSave(setting.key)}
+                        disabled={updateMutation.isPending}
+                        className="text-green-600 hover:text-green-900 mr-3"
+                      >
+                        ✓ Сохранить
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditingKey(null);
+                          setNewValue('');
+                        }}
+                        className="text-gray-600 hover:text-gray-900"
+                      >
+                        ✗ Отмена
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => handleEdit(setting)}
+                      className="text-indigo-600 hover:text-indigo-900"
+                    >
+                      Редактировать
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {(!settings || settings.length === 0) && (
+              <tr>
+                <td colSpan={4} className="px-6 py-4 text-center text-sm text-gray-500">
+                  Нет настроек. Выполните миграцию базы данных для создания настроек по умолчанию.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
