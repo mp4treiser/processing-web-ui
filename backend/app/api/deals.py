@@ -1,16 +1,102 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List
+from decimal import Decimal
 from app.core.database import get_db
 from app.core.dependencies import get_current_active_user
 from app.core.permissions import require_permission
 from app.models.user import User, UserRole
 from app.models.deal import Deal, DealStatus
 from app.models.transaction import Transaction, TransactionStatus
-from app.schemas.deal import DealCreate, DealResponse, DealUpdate, DealListResponse
+from app.models.deal_history import DealHistory, DealHistoryAction
+from app.models.manager_commission import ManagerCommission
+from app.schemas.deal import DealCreate, DealResponse, DealUpdate, DealListResponse, DealHistoryResponse, DealIncomeResponse
 from app.schemas.transaction import TransactionCreate
 
 router = APIRouter(prefix="/deals", tags=["deals"])
+
+
+def add_deal_history(db: Session, deal_id: int, user_id: int, action: str, changes: dict = None, comment: str = None):
+    """Добавить запись в историю сделки"""
+    history = DealHistory(
+        deal_id=deal_id,
+        user_id=user_id,
+        action=action,
+        changes=changes,
+        comment=comment
+    )
+    db.add(history)
+    return history
+
+
+def calculate_deal_income(deal: Deal, db: Session) -> dict:
+    """Рассчитать доход и прибыль по сделке
+    
+    Формулы:
+    - Клиент отправляет = Σ(сумма_для_клиента × курс) × (1 + Ставка_клиента%)
+    - Затраты на сделку = Σ Route Income
+    - Доход = Клиент отправляет − Затраты на сделку
+    - Комиссия менеджера = Доход × %комиссии
+    - Чистая прибыль = Доход − Комиссия менеджера
+    """
+    # Считаем суммы по транзакциям
+    total_route_income = Decimal("0")  # Затраты на сделку (сумма Route Income)
+    total_amount_times_rate = Decimal("0")  # Σ(сумма_для_клиента × курс)
+    
+    for trans in deal.transactions:
+        # Route Income (затраты)
+        if trans.calculated_route_income:
+            total_route_income += Decimal(str(trans.calculated_route_income))
+        
+        # Сумма для клиента × курс
+        amount_for_client = Decimal(str(trans.amount_from_account or trans.amount_eur or 0))
+        exchange_rate = Decimal(str(trans.exchange_rate or 1))
+        total_amount_times_rate += amount_for_client * exchange_rate
+    
+    # Ставка клиента
+    client_rate = Decimal(str(deal.client_rate_percent or 0))
+    
+    # Клиент отправляет = Σ(сумма × курс) × (1 + ставка%)
+    client_should_send = total_amount_times_rate * (1 + client_rate / 100)
+    
+    # Затраты на сделку = Σ Route Income
+    deal_costs = total_route_income
+    
+    # Доход = Клиент отправляет − Затраты на сделку
+    income_amount = client_should_send - deal_costs
+    
+    # Доход в процентах от затрат
+    income_percent = Decimal("0")
+    if deal_costs > 0:
+        income_percent = (income_amount / deal_costs) * 100
+    
+    is_profitable = income_amount >= 0
+    
+    # Получаем комиссию менеджера
+    manager_commission = db.query(ManagerCommission).filter(
+        ManagerCommission.user_id == deal.manager_id,
+        ManagerCommission.is_active == True
+    ).first()
+    
+    manager_commission_percent = Decimal(str(manager_commission.commission_percent)) if manager_commission else Decimal("0")
+    
+    # Комиссия менеджера = Доход × %комиссии (только если прибыльно)
+    manager_commission_amount = income_amount * (manager_commission_percent / 100) if is_profitable else Decimal("0")
+    
+    # Чистая прибыль = Доход − Комиссия менеджера
+    net_profit = income_amount - manager_commission_amount
+    
+    return {
+        "client_should_send": float(round(client_should_send, 2)),  # Клиент отправляет
+        "deal_costs": float(round(deal_costs, 2)),  # Затраты на сделку (Route Income)
+        "income_amount": float(round(income_amount, 2)),  # Доход
+        "income_percent": float(round(income_percent, 2)),  # Доход в %
+        "is_profitable": is_profitable,
+        "manager_commission_percent": float(round(manager_commission_percent, 2)),
+        "manager_commission_amount": float(round(manager_commission_amount, 2)),
+        "net_profit": float(round(net_profit, 2)),
+        "currency": deal.client_sends_currency or "USDT"
+    }
 
 
 @router.post("", response_model=DealResponse, status_code=status.HTTP_201_CREATED)
@@ -32,6 +118,7 @@ def create_deal(
     db_deal = Deal(
         client_id=deal_data.client_id,
         manager_id=current_user.id,
+        created_by_id=current_user.id,  # Кто создал
         total_eur_request=deal_data.total_eur_request,
         client_rate_percent=deal_data.client_rate_percent,
         status=DealStatus.NEW.value
@@ -49,6 +136,18 @@ def create_deal(
             status=TransactionStatus.PENDING
         )
         db.add(db_trans)
+    
+    # Добавляем запись в историю
+    add_deal_history(
+        db, db_deal.id, current_user.id, 
+        DealHistoryAction.CREATED.value,
+        changes={
+            "client_id": deal_data.client_id,
+            "total_eur_request": str(deal_data.total_eur_request),
+            "client_rate_percent": str(deal_data.client_rate_percent),
+            "transactions_count": len(deal_data.transactions)
+        }
+    )
     
     db.commit()
     db.refresh(db_deal)
@@ -152,6 +251,7 @@ def get_deals(
 @router.get("/{deal_id}", response_model=DealResponse)
 def get_deal(
     deal_id: int,
+    include_history: bool = Query(False, description="Включать ли историю изменений"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -164,7 +264,161 @@ def get_deal(
     if current_user.role == UserRole.MANAGER and deal.manager_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     
-    return deal
+    # Формируем ответ с дополнительными данными
+    response = DealResponse.model_validate(deal)
+    
+    # Добавляем информацию о создателе
+    if deal.created_by_id:
+        created_by = db.query(User).filter(User.id == deal.created_by_id).first()
+        if created_by:
+            response.created_by_email = created_by.email
+            response.created_by_name = created_by.full_name
+    
+    # Добавляем информацию о менеджере
+    if deal.manager_id:
+        manager = db.query(User).filter(User.id == deal.manager_id).first()
+        if manager:
+            response.manager_email = manager.email
+            response.manager_name = manager.full_name
+    
+    # Добавляем историю, если запрошена
+    if include_history:
+        history_records = db.query(DealHistory).filter(
+            DealHistory.deal_id == deal_id
+        ).order_by(DealHistory.created_at.desc()).all()
+        
+        history_list = []
+        for h in history_records:
+            user = db.query(User).filter(User.id == h.user_id).first()
+            history_list.append(DealHistoryResponse(
+                id=h.id,
+                deal_id=h.deal_id,
+                user_id=h.user_id,
+                user_email=user.email if user else None,
+                user_name=user.full_name if user else None,
+                action=h.action,
+                changes=h.changes,
+                comment=h.comment,
+                created_at=h.created_at
+            ))
+        response.history = history_list
+    
+    return response
+
+
+@router.get("/{deal_id}/history", response_model=List[DealHistoryResponse])
+def get_deal_history(
+    deal_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Получить историю изменений сделки"""
+    deal = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+    
+    # Проверка прав доступа
+    if current_user.role == UserRole.MANAGER and deal.manager_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    
+    history_records = db.query(DealHistory).filter(
+        DealHistory.deal_id == deal_id
+    ).order_by(DealHistory.created_at.desc()).all()
+    
+    result = []
+    for h in history_records:
+        user = db.query(User).filter(User.id == h.user_id).first()
+        result.append(DealHistoryResponse(
+            id=h.id,
+            deal_id=h.deal_id,
+            user_id=h.user_id,
+            user_email=user.email if user else None,
+            user_name=user.full_name if user else None,
+            action=h.action,
+            changes=h.changes,
+            comment=h.comment,
+            created_at=h.created_at
+        ))
+    
+    return result
+
+
+@router.get("/{deal_id}/income", response_model=DealIncomeResponse)
+def get_deal_income(
+    deal_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Получить расчёт дохода и прибыли по сделке"""
+    deal = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+    
+    # Проверка прав доступа
+    if current_user.role == UserRole.MANAGER and deal.manager_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    
+    income_data = calculate_deal_income(deal, db)
+    return DealIncomeResponse(**income_data)
+
+
+@router.patch("/{deal_id}/client-rate")
+def update_client_rate(
+    deal_id: int,
+    data: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Обновить ставку клиента с пересчётом всех значений"""
+    deal = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+    
+    # Проверка прав: бухгалтер или главный менеджер
+    allowed_roles = [UserRole.ACCOUNTANT, UserRole.SENIOR_MANAGER, UserRole.DIRECTOR]
+    if current_user.role not in [r.value for r in allowed_roles] and current_user.role not in allowed_roles:
+        raise HTTPException(status_code=403, detail="Not enough permissions to edit client rate")
+    
+    new_rate = Decimal(str(data.get("client_rate_percent", deal.client_rate_percent)))
+    old_rate = deal.client_rate_percent
+    
+    # Добавляем в историю
+    add_deal_history(
+        db, deal_id, current_user.id,
+        DealHistoryAction.CLIENT_RATE_CHANGED.value,
+        changes={
+            "client_rate_percent": {"old": str(old_rate), "new": str(new_rate)}
+        }
+    )
+    
+    deal.client_rate_percent = new_rate
+    
+    # Пересчитываем total_usdt_calculated если есть данные
+    if deal.deal_amount and deal.transactions:
+        # Пересчёт логики на основе новой ставки
+        # Формула: client_should_send = deal_amount * avg_rate * (1 + client_rate/100)
+        avg_rate = Decimal("1")
+        rate_count = 0
+        for trans in deal.transactions:
+            if trans.exchange_rate:
+                avg_rate += Decimal(str(trans.exchange_rate))
+                rate_count += 1
+        if rate_count > 0:
+            avg_rate = avg_rate / rate_count
+        
+        deal.total_usdt_calculated = deal.deal_amount * avg_rate * (1 + new_rate / 100)
+    
+    db.commit()
+    db.refresh(deal)
+    
+    # Возвращаем обновлённые данные дохода
+    income_data = calculate_deal_income(deal, db)
+    return {
+        "deal_id": deal.id,
+        "client_rate_percent": str(deal.client_rate_percent),
+        "total_usdt_calculated": str(deal.total_usdt_calculated) if deal.total_usdt_calculated else None,
+        "income": income_data
+    }
 
 
 @router.get("/{deal_id}/copy-data")

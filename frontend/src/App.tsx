@@ -15,6 +15,7 @@ import { AccountantDashboard } from './pages/AccountantDashboard';
 import { SeniorManagerView } from './pages/SeniorManagerView';
 import { ReferencesPage } from './pages/ReferencesPage';
 import { DebtsList } from './pages/DebtsList';
+import { AnalyticsDashboard } from './pages/AnalyticsDashboard';
 
 const queryClient = new QueryClient();
 
@@ -131,6 +132,16 @@ function AppRoutes() {
           <ProtectedRoute allowedRoles={['manager', 'accountant']}>
             <Layout>
               <DebtsList />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/analytics"
+        element={
+          <ProtectedRoute allowedRoles={['accountant', 'senior_manager', 'director']}>
+            <Layout>
+              <AnalyticsDashboard />
             </Layout>
           </ProtectedRoute>
         }

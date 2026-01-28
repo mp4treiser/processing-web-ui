@@ -13,6 +13,9 @@ from app.models.internal_company_account import InternalCompanyAccount
 from app.models.internal_company_account_history import InternalCompanyAccountHistory, CompanyBalanceChangeType
 from app.models.currency import Currency
 from app.models.deal_template import DealTemplate
+from app.models.deal_history import DealHistory, DealHistoryAction
+from app.models.manager_commission import ManagerCommission
+from app.models.system_settings import SystemSetting
 
 __all__ = [
     "User",
@@ -37,5 +40,9 @@ __all__ = [
     "CompanyBalanceChangeType",
     "Currency",
     "DealTemplate",
+    "DealHistory",
+    "DealHistoryAction",
+    "ManagerCommission",
+    "SystemSetting",
 ]
 

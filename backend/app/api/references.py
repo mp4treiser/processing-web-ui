@@ -880,3 +880,181 @@ def delete_currency(
     db.commit()
     return None
 
+
+# ========== Комиссии менеджеров ==========
+from app.models.manager_commission import ManagerCommission
+
+class ManagerCommissionResponse(BaseModel):
+    id: int
+    user_id: int
+    user_email: str
+    user_name: Optional[str] = None
+    user_role: str
+    commission_percent: Decimal
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ManagerCommissionUpdate(BaseModel):
+    commission_percent: Decimal
+
+
+@router.get("/manager-commissions", response_model=List[ManagerCommissionResponse])
+def get_manager_commissions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("references.clients.read"))
+):
+    """Получить список комиссий менеджеров (с информацией о пользователях)"""
+    from app.models.user import User as UserModel
+    
+    # Получаем всех пользователей
+    users = db.query(UserModel).filter(UserModel.is_active == "true").all()
+    
+    result = []
+    for user in users:
+        # Ищем комиссию для пользователя
+        commission = db.query(ManagerCommission).filter(
+            ManagerCommission.user_id == user.id
+        ).first()
+        
+        result.append(ManagerCommissionResponse(
+            id=commission.id if commission else 0,
+            user_id=user.id,
+            user_email=user.email,
+            user_name=user.full_name,
+            user_role=user.role,
+            commission_percent=commission.commission_percent if commission else Decimal("0"),
+            is_active=commission.is_active if commission else True,
+            created_at=commission.created_at if commission else None,
+            updated_at=commission.updated_at if commission else None
+        ))
+    
+    return result
+
+
+@router.put("/manager-commissions/{user_id}", response_model=ManagerCommissionResponse)
+def update_manager_commission(
+    user_id: int,
+    commission_update: ManagerCommissionUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("references.clients.write"))
+):
+    """Установить/обновить комиссию менеджера"""
+    from app.models.user import User as UserModel
+    
+    # Проверяем, что пользователь существует
+    user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Ищем существующую запись
+    commission = db.query(ManagerCommission).filter(
+        ManagerCommission.user_id == user_id
+    ).first()
+    
+    if commission:
+        commission.commission_percent = commission_update.commission_percent
+    else:
+        commission = ManagerCommission(
+            user_id=user_id,
+            commission_percent=commission_update.commission_percent,
+            is_active=True
+        )
+        db.add(commission)
+    
+    db.commit()
+    db.refresh(commission)
+    
+    return ManagerCommissionResponse(
+        id=commission.id,
+        user_id=user.id,
+        user_email=user.email,
+        user_name=user.full_name,
+        user_role=user.role,
+        commission_percent=commission.commission_percent,
+        is_active=commission.is_active,
+        created_at=commission.created_at,
+        updated_at=commission.updated_at
+    )
+
+
+# ========== Системные настройки ==========
+from app.models.system_settings import SystemSetting
+
+class SystemSettingResponse(BaseModel):
+    id: int
+    key: str
+    value: Optional[str] = None
+    description: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SystemSettingUpdate(BaseModel):
+    value: str
+
+
+@router.get("/settings", response_model=List[SystemSettingResponse])
+def get_system_settings(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("references.clients.read"))
+):
+    """Получить все системные настройки"""
+    settings = db.query(SystemSetting).all()
+    return settings
+
+
+@router.get("/settings/{key}", response_model=SystemSettingResponse)
+def get_system_setting(
+    key: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("references.clients.read"))
+):
+    """Получить системную настройку по ключу"""
+    setting = db.query(SystemSetting).filter(SystemSetting.key == key).first()
+    if not setting:
+        raise HTTPException(status_code=404, detail="Setting not found")
+    return setting
+
+
+@router.put("/settings/{key}", response_model=SystemSettingResponse)
+def update_system_setting(
+    key: str,
+    setting_update: SystemSettingUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("references.clients.write"))
+):
+    """Обновить или создать системную настройку"""
+    setting = db.query(SystemSetting).filter(SystemSetting.key == key).first()
+    
+    if setting:
+        setting.value = setting_update.value
+    else:
+        # Создаём новую настройку
+        setting = SystemSetting(
+            key=key,
+            value=setting_update.value
+        )
+        db.add(setting)
+    
+    db.commit()
+    db.refresh(setting)
+    return setting
+
+
+@router.get("/default-client-rate")
+def get_default_client_rate(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Получить ставку клиента по умолчанию"""
+    setting = db.query(SystemSetting).filter(SystemSetting.key == "default_client_rate").first()
+    return {"default_client_rate": setting.value if setting else "2.0"}
+

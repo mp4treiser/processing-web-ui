@@ -71,7 +71,7 @@ export function NewDeal() {
   const { user } = useAuth();
   const [clientId, setClientId] = useState<number | ''>('');
   const [totalEur, setTotalEur] = useState<string>('');
-  const [clientRate, setClientRate] = useState<string>('1.0');
+  const [clientRate, setClientRate] = useState<string>('');
   const [transactions, setTransactions] = useState<Transaction[]>([
     { company_id: '', account_id: '', amount_eur: 0, recipient_details: '' },
   ]);
@@ -85,6 +85,22 @@ export function NewDeal() {
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | ''>('');
   const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false);
   const [templateName, setTemplateName] = useState('');
+
+  // Загружаем ставку клиента по умолчанию
+  const { data: defaultClientRate } = useQuery({
+    queryKey: ['default-client-rate'],
+    queryFn: async () => {
+      const response = await api.get('/api/reference/default-client-rate');
+      return response.data.default_client_rate;
+    },
+  });
+
+  // Устанавливаем ставку по умолчанию при загрузке
+  useEffect(() => {
+    if (defaultClientRate && !clientRate) {
+      setClientRate(defaultClientRate);
+    }
+  }, [defaultClientRate]);
 
   const { data: clients } = useQuery<Client[]>({
     queryKey: ['reference-clients'],
@@ -452,22 +468,16 @@ export function NewDeal() {
           <h1 className="text-lg font-bold text-gray-900">
             {copyFromId ? `Копирование сделки #${copyFromId}` : 'Создание новой сделки'}
           </h1>
-          {user?.role === 'accountant' && routeTransactions.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowSaveTemplateModal(true)}
-              className="px-3 py-1 text-xs bg-gray-600 text-white rounded-md hover:bg-gray-700"
-            >
-              Сохранить как шаблон
-            </button>
-          )}
         </div>
+        
+        {/* Блок остатков компаний для бухгалтера */}
+        {user?.role === 'accountant' && <CompanyBalancesDisplay showProjected={true} selectedAccounts={selectedAccounts} />}
 
-        {/* Выбор шаблона для бухгалтера */}
+        {/* Выбор шаблона для бухгалтера - МЕЖДУ балансами и формой */}
         {user?.role === 'accountant' && templates && templates.length > 0 && !copyFromId && (
-          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-2 mb-2">
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-medium text-indigo-800">Шаблон:</label>
+          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 mb-3">
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium text-indigo-800 whitespace-nowrap">📋 Шаблон:</label>
               <select
                 value={selectedTemplateId}
                 onChange={(e) => {
@@ -475,7 +485,7 @@ export function NewDeal() {
                   setSelectedTemplateId(id || '');
                   if (id) handleApplyTemplate(id);
                 }}
-                className="flex-1 px-2 py-1 text-xs border border-indigo-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                className="flex-1 px-3 py-2 text-sm border border-indigo-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
               >
                 <option value="">— Выберите шаблон или настройте вручную —</option>
                 {templates.map((t) => (
@@ -487,30 +497,27 @@ export function NewDeal() {
             </div>
           </div>
         )}
-        
-        {/* Блок остатков компаний для бухгалтера */}
-        {user?.role === 'accountant' && <CompanyBalancesDisplay showProjected={true} selectedAccounts={selectedAccounts} />}
 
         <form onSubmit={handleSubmit} className="w-full bg-white shadow rounded-lg p-3 space-y-2">
         {/* Предупреждение о задолженности */}
         {user?.role === 'accountant' && clientDebts && clientDebts.length > 0 && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 mb-2">
             <p className="text-xs font-medium text-yellow-800 mb-1">
-              ⚠️ Client has debt:
+              ⚠️ У клиента есть задолженность:
             </p>
             <ul className="list-disc list-inside text-xs text-yellow-700 space-y-0.5">
               {clientDebts.map((deal: any) => (
                 <li key={deal.id}>
-                  Deal #{deal.id}: {parseFloat(deal.client_debt_amount || '0').toLocaleString()} EUR
+                  Сделка #{deal.id}: {parseFloat(deal.client_debt_amount || '0').toLocaleString()} EUR
                   {' '}
                   <span className="text-xs">
-                    ({Math.ceil((new Date().getTime() - new Date(deal.created_at).getTime()) / (1000 * 60 * 60 * 24))} days)
+                    ({Math.ceil((new Date().getTime() - new Date(deal.created_at).getTime()) / (1000 * 60 * 60 * 24))} дней)
                   </span>
                 </li>
               ))}
             </ul>
             <p className="text-xs text-yellow-600 mt-1">
-              It is recommended to remind the client about the debt and offer to pay it off as part of this deal.
+              Рекомендуется напомнить клиенту о долге и предложить погасить его в рамках этой сделки.
             </p>
           </div>
         )}
@@ -518,11 +525,11 @@ export function NewDeal() {
         {user?.role === 'accountant' ? (
           // Новый интерфейс для бухгалтера - две колонки
           <div className="grid grid-cols-12 gap-4">
-            {/* Левая колонка - выбор клиента и валют */}
+            {/* Левая колонка - выбор клиента, валют и ставки */}
             <div className="col-span-3 space-y-2">
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-0.5">
-                  Client *
+                  Клиент *
                 </label>
                 <select
                   value={clientId}
@@ -530,7 +537,7 @@ export function NewDeal() {
                   required
                   className="w-full px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
                 >
-                  <option value="">Select a client</option>
+                  <option value="">Выберите клиента</option>
                   {clients?.map((client) => (
                     <option key={client.id} value={client.id}>
                       {client.name}
@@ -541,7 +548,7 @@ export function NewDeal() {
               
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-0.5">
-                  Amount Client Wants to Receive *
+                  Сумма, которую клиент хочет получить *
                 </label>
                 <input
                   type="number"
@@ -551,12 +558,12 @@ export function NewDeal() {
                   required
                   className="w-full px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
                 />
-                <p className="text-xs text-gray-500 mt-0.5">Total amount client will receive in {clientReceivesCurrency || 'target currency'}</p>
+                <p className="text-xs text-gray-500 mt-0.5">Общая сумма в {clientReceivesCurrency || 'целевой валюте'}</p>
               </div>
               
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-0.5">
-                  Client Sends Currency *
+                  Клиент отправляет валюту *
                 </label>
                 <select
                   value={clientSendsCurrency}
@@ -564,7 +571,7 @@ export function NewDeal() {
                   required
                   className="w-full px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
                 >
-                  <option value="">Select currency</option>
+                  <option value="">Выберите валюту</option>
                   {currencies?.map((curr: any) => (
                     <option key={curr.id} value={curr.code}>
                       {curr.code} - {curr.name}
@@ -575,7 +582,7 @@ export function NewDeal() {
               
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-0.5">
-                  Client Receives Currency *
+                  Клиент получает валюту *
                 </label>
                 <select
                   value={clientReceivesCurrency}
@@ -583,13 +590,31 @@ export function NewDeal() {
                   required
                   className="w-full px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
                 >
-                  <option value="">Select currency</option>
+                  <option value="">Выберите валюту</option>
                   {currencies?.map((curr: any) => (
                     <option key={curr.id} value={curr.code}>
                       {curr.code} - {curr.name}
                     </option>
                   ))}
                 </select>
+              </div>
+              
+              {/* Ставка клиента */}
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-0.5">
+                  Ставка клиента (%)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={clientRate}
+                  onChange={(e) => setClientRate(e.target.value)}
+                  className="w-full px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                  placeholder={`По умолчанию: ${defaultClientRate || '2.0'}%`}
+                />
+                <p className="text-xs text-gray-500 mt-0.5">
+                  По умолчанию из справочника: {defaultClientRate || '2.0'}%
+                </p>
               </div>
             </div>
             
@@ -606,7 +631,7 @@ export function NewDeal() {
                     }])}
                     className="px-3 py-1 text-xs bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
                   >
-                    + Add First Transaction
+                    + Добавить первую транзакцию
                   </button>
                 </div>
               ) : (
@@ -627,7 +652,7 @@ export function NewDeal() {
           <>
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">
-                Client *
+                Клиент *
               </label>
               <select
                 value={clientId}
@@ -635,7 +660,7 @@ export function NewDeal() {
                 required
                 className="w-full px-2 py-1 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
               >
-                <option value="">Select a client</option>
+                <option value="">Выберите клиента</option>
                 {clients?.map((client) => (
                   <option key={client.id} value={client.id}>
                     {client.name}
@@ -647,7 +672,7 @@ export function NewDeal() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Total EUR Request *
+                  Сумма запроса (EUR) *
                 </label>
                 <input
                   type="number"
@@ -660,7 +685,7 @@ export function NewDeal() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Client Rate % *
+                  Ставка клиента (%) *
                 </label>
                 <input
                   type="number"
@@ -668,6 +693,7 @@ export function NewDeal() {
                   value={clientRate}
                   onChange={(e) => setClientRate(e.target.value)}
                   required
+                  placeholder={`По умолчанию: ${defaultClientRate || '2.0'}%`}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
                 />
               </div>
@@ -680,7 +706,7 @@ export function NewDeal() {
                   onClick={addTransaction}
                   className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
                 >
-                  + Add Transaction
+                  + Добавить транзакцию
                 </button>
               </div>
 
@@ -688,14 +714,14 @@ export function NewDeal() {
                 {transactions.map((trans, index) => (
                   <div key={index} className="border border-gray-200 rounded-md p-4">
                     <div className="flex justify-between items-start mb-3">
-                      <span className="text-sm font-medium text-gray-700">Transaction {index + 1}</span>
+                      <span className="text-sm font-medium text-gray-700">Транзакция {index + 1}</span>
                       {transactions.length > 1 && (
                         <button
                           type="button"
                           onClick={() => removeTransaction(index)}
                           className="text-red-600 hover:text-red-800 text-sm"
                         >
-                          Remove
+                          Удалить
                         </button>
                       )}
                     </div>
@@ -713,14 +739,14 @@ export function NewDeal() {
 
               <div className="mt-4 p-3 bg-gray-50 rounded-md">
                 <p className="text-sm text-gray-700">
-                  <strong>Total Transactions:</strong> {calculateTotal().toLocaleString()} EUR
+                  <strong>Всего транзакций:</strong> {calculateTotal().toLocaleString()} EUR
                 </p>
                 <p className="text-sm text-gray-700">
-                  <strong>Deal Total:</strong> {parseFloat(totalEur || '0').toLocaleString()} EUR
+                  <strong>Сумма сделки:</strong> {parseFloat(totalEur || '0').toLocaleString()} EUR
                 </p>
                 {Math.abs(calculateTotal() - parseFloat(totalEur || '0')) > 0.01 && (
                   <p className="text-sm text-red-600 mt-1">
-                    ⚠️ Sums do not match!
+                    ⚠️ Суммы не совпадают!
                   </p>
                 )}
               </div>
@@ -729,20 +755,30 @@ export function NewDeal() {
         )}
 
 
-        <div className="flex justify-end space-x-2">
+        {/* Кнопки - сохранить шаблон рядом с созданием сделки */}
+        <div className="flex justify-end space-x-2 pt-3 border-t border-gray-200">
           <button
             type="button"
             onClick={() => navigate(-1)}
-            className="px-3 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+            className="px-3 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
           >
             Отмена
           </button>
+          {user?.role === 'accountant' && routeTransactions.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowSaveTemplateModal(true)}
+              className="px-3 py-2 text-sm bg-gray-600 text-white rounded-md hover:bg-gray-700"
+            >
+              💾 Сохранить как шаблон
+            </button>
+          )}
           <button
             type="submit"
             disabled={createMutation.isPending}
-            className="px-3 py-1 text-xs bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
+            className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
           >
-            {createMutation.isPending ? 'Создание...' : 'Создать сделку'}
+            {createMutation.isPending ? 'Создание...' : '✓ Создать сделку'}
           </button>
         </div>
       </form>
@@ -791,4 +827,3 @@ export function NewDeal() {
     </div>
   );
 }
-

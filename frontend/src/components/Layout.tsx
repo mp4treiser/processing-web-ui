@@ -30,6 +30,7 @@ export function Layout({ children }: LayoutProps) {
         { path: '/deals/new', label: 'New Deal', roles: ['accountant'] },
         { path: '/accountant', label: 'Calculation Queue', roles: ['accountant'] },
         { path: '/accountant/dashboard', label: 'Financial Dashboard', roles: ['accountant'] },
+        { path: '/analytics', label: 'Analytics', roles: ['accountant'] },
         { path: '/references', label: 'References', roles: ['accountant', 'senior_manager', 'director'] },
       ];
     }
@@ -38,6 +39,7 @@ export function Layout({ children }: LayoutProps) {
       return [
         ...baseLinks,
         { path: '/senior-manager', label: 'Review Deals', roles: ['senior_manager'] },
+        { path: '/analytics', label: 'Analytics', roles: ['senior_manager'] },
         { path: '/references', label: 'References', roles: ['senior_manager', 'accountant', 'director'] },
       ];
     }
@@ -46,6 +48,7 @@ export function Layout({ children }: LayoutProps) {
       return [
         ...baseLinks,
         { path: '/director/dashboard', label: 'Financial Dashboard', roles: ['director'] },
+        { path: '/analytics', label: 'Analytics', roles: ['director'] },
         { path: '/references', label: 'References', roles: ['senior_manager', 'accountant', 'director'] },
       ];
     }
