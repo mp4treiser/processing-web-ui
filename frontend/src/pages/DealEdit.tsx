@@ -95,6 +95,7 @@ export function DealEdit() {
   const [dealAmount, setDealAmount] = useState<string>('');
   const [clientSendsCurrency, setClientSendsCurrency] = useState<string>('');
   const [clientReceivesCurrency, setClientReceivesCurrency] = useState<string>('');
+  const [clientRate, setClientRate] = useState<string>('');
   const [routeTransactions, setRouteTransactions] = useState<TransactionRoute[]>([]);
   const [deletedTransactionIds, setDeletedTransactionIds] = useState<number[]>([]);
 
@@ -129,6 +130,7 @@ export function DealEdit() {
       setDealAmount(deal.deal_amount || deal.total_eur_request || '');
       setClientSendsCurrency(deal.client_sends_currency || '');
       setClientReceivesCurrency(deal.client_receives_currency || '');
+      setClientRate(deal.client_rate_percent || '');
 
       // Группируем транзакции по client_company_id
       const grouped: Record<number, Transaction[]> = {};
@@ -201,6 +203,7 @@ export function DealEdit() {
       deal_amount: dealAmount,
       client_sends_currency: clientSendsCurrency,
       client_receives_currency: clientReceivesCurrency,
+      client_rate_percent: clientRate,
       deleted_transaction_ids: deletedTransactionIds,
       transactions: routeTransactions.map(t => ({
         client_company_id: t.client_company_id,
@@ -336,21 +339,15 @@ export function DealEdit() {
 
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-0.5">
-                  Клиент получает *
+                  Ставка клиента (%)
                 </label>
-                <select
-                  value={clientReceivesCurrency}
-                  onChange={(e) => setClientReceivesCurrency(e.target.value)}
-                  required
+                <input
+                  type="number"
+                  step="0.01"
+                  value={clientRate}
+                  onChange={(e) => setClientRate(e.target.value)}
                   className="w-full px-2 py-1 text-xs border border-gray-300 rounded-md"
-                >
-                  <option value="">Выберите валюту</option>
-                  {currencies?.map((curr: any) => (
-                    <option key={curr.id} value={curr.code}>
-                      {curr.code} - {curr.name}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
 
               {deletedTransactionIds.length > 0 && (

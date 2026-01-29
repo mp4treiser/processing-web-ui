@@ -360,6 +360,7 @@ export function NewDeal() {
           client_sends_currency: clientSendsCurrency,
           client_receives_currency: clientReceivesCurrency,
           client_rate_percent: clientRate,
+          copy_from_deal_id: copyFromId ? parseInt(copyFromId) : null,
           transactions: routeTransactions.map(t => ({
             client_company_id: t.client_company_id,
             amount_for_client: t.amount_for_client,

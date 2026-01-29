@@ -24,6 +24,11 @@ class DealHistory(Base):
     deal_id = Column(Integer, ForeignKey("deals.id"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     
+    # Денормализованные поля пользователя для резилентности
+    user_email = Column(String, nullable=True)
+    user_name = Column(String, nullable=True)
+    user_role = Column(String, nullable=True)  # manager, accountant, senior_manager, director
+    
     action = Column(String(50), nullable=False)  # created, updated, status_changed, etc.
     
     # Детали изменения в JSON формате

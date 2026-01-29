@@ -7,8 +7,10 @@ from pydantic import BaseModel
 from app.core.database import get_db
 from app.core.dependencies import get_current_active_user
 from app.core.permissions import require_permission
+from app.core.deal_history_localization import DealHistoryActionRU
 from app.models.user import User, UserRole
 from app.models.deal import Deal, DealStatus
+from app.models.deal_history import DealHistory
 from app.models.transaction import Transaction, TransactionStatus
 from app.models.account_balance import AccountBalance
 from app.models.account_balance_history import AccountBalanceHistory, BalanceChangeType
@@ -59,6 +61,7 @@ def create_deal_as_accountant(
     db_deal = Deal(
         client_id=deal_data.client_id,
         manager_id=current_user.id,
+        created_by_id=current_user.id,
         total_eur_request=deal_data.total_eur_request if deal_data.total_eur_request else (deal_data.deal_amount or Decimal("0")),
         client_rate_percent=deal_data.client_rate_percent,
         deal_amount=deal_data.deal_amount,
@@ -124,6 +127,30 @@ def create_deal_as_accountant(
     
     # Обновляем итоговую сумму сделки
     db_deal.total_usdt_calculated = total_client_should_send
+    
+    # Добавляем запись в историю: Создано
+    history = DealHistory(
+        deal_id=db_deal.id,
+        user_id=current_user.id,
+        user_email=current_user.email,
+        user_name=current_user.full_name,
+        user_role=current_user.role,
+        action=DealHistoryActionRU.CREATED.value
+    )
+    db.add(history)
+    
+    # Если это копирование сделки, добавляем запись о копировании
+    if deal_data.copy_from_deal_id:
+        copy_history = DealHistory(
+            deal_id=db_deal.id,
+            user_id=current_user.id,
+            user_email=current_user.email,
+            user_name=current_user.full_name,
+            user_role=current_user.role,
+            action=DealHistoryActionRU.COPIED.value,
+            comment=f"Скопировано из сделки #{deal_data.copy_from_deal_id}"
+        )
+        db.add(copy_history)
     
     db.commit()
     db.refresh(db_deal)
