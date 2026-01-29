@@ -18,6 +18,7 @@ class DealBase(BaseModel):
 
 class DealCreate(DealBase):
     transactions: List[dict]  # Список транзакций для создания
+    copy_from_deal_id: int | None = None  # ID сделки для копирования (если копируем)
 
 
 class DealUpdate(BaseModel):
@@ -39,6 +40,7 @@ class DealHistoryResponse(BaseModel):
     user_id: int
     user_email: str | None = None
     user_name: str | None = None
+    user_role: str | None = None
     action: str
     changes: dict | None = None
     comment: str | None = None

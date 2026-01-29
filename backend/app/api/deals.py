@@ -5,6 +5,11 @@ from decimal import Decimal
 from app.core.database import get_db
 from app.core.dependencies import get_current_active_user
 from app.core.permissions import require_permission
+from app.core.deal_history_localization import (
+    format_client_rate_history,
+    DealHistoryActionRU,
+    capitalize_role
+)
 from app.models.user import User, UserRole
 from app.models.deal import Deal, DealStatus
 from app.models.transaction import Transaction, TransactionStatus
@@ -16,11 +21,26 @@ from app.schemas.transaction import TransactionCreate
 router = APIRouter(prefix="/deals", tags=["deals"])
 
 
-def add_deal_history(db: Session, deal_id: int, user_id: int, action: str, changes: dict = None, comment: str = None):
-    """Добавить запись в историю сделки"""
+def add_deal_history(
+    db: Session,
+    deal_id: int,
+    user_id: int,
+    action: str,
+    changes: dict = None,
+    comment: str = None,
+    user: User = None
+):
+    """Добавить запись в историю сделки с информацией о пользователе"""
+    # Если пользователь не передан, загружаем его из БД
+    if user is None:
+        user = db.query(User).filter(User.id == user_id).first()
+    
     history = DealHistory(
         deal_id=deal_id,
         user_id=user_id,
+        user_email=user.email if user else None,
+        user_name=user.full_name if user else None,
+        user_role=user.role if user else None,
         action=action,
         changes=changes,
         comment=comment
@@ -137,16 +157,11 @@ def create_deal(
         )
         db.add(db_trans)
     
-    # Добавляем запись в историю
+    # Добавляем запись в историю: Создано
     add_deal_history(
-        db, db_deal.id, current_user.id, 
-        DealHistoryAction.CREATED.value,
-        changes={
-            "client_id": deal_data.client_id,
-            "total_eur_request": str(deal_data.total_eur_request),
-            "client_rate_percent": str(deal_data.client_rate_percent),
-            "transactions_count": len(deal_data.transactions)
-        }
+        db, db_deal.id, current_user.id,
+        DealHistoryActionRU.CREATED.value,
+        user=current_user
     )
     
     db.commit()
@@ -289,13 +304,25 @@ def get_deal(
         
         history_list = []
         for h in history_records:
-            user = db.query(User).filter(User.id == h.user_id).first()
+            # Используем денормализованные данные или загружаем из БД
+            user_email = h.user_email
+            user_name = h.user_name
+            user_role = h.user_role
+            
+            if not user_name or not user_email or not user_role:
+                user = db.query(User).filter(User.id == h.user_id).first()
+                if user:
+                    user_email = user_email or user.email
+                    user_name = user_name or user.full_name
+                    user_role = user_role or user.role
+            
             history_list.append(DealHistoryResponse(
                 id=h.id,
                 deal_id=h.deal_id,
                 user_id=h.user_id,
-                user_email=user.email if user else None,
-                user_name=user.full_name if user else None,
+                user_email=user_email,
+                user_name=user_name,
+                user_role=user_role,
                 action=h.action,
                 changes=h.changes,
                 comment=h.comment,
@@ -327,13 +354,25 @@ def get_deal_history(
     
     result = []
     for h in history_records:
-        user = db.query(User).filter(User.id == h.user_id).first()
+        # Используем денормализованные данные или загружаем из БД
+        user_email = h.user_email
+        user_name = h.user_name
+        user_role = h.user_role
+        
+        if not user_name or not user_email or not user_role:
+            user = db.query(User).filter(User.id == h.user_id).first()
+            if user:
+                user_email = user_email or user.email
+                user_name = user_name or user.full_name
+                user_role = user_role or user.role
+        
         result.append(DealHistoryResponse(
             id=h.id,
             deal_id=h.deal_id,
             user_id=h.user_id,
-            user_email=user.email if user else None,
-            user_name=user.full_name if user else None,
+            user_email=user_email,
+            user_name=user_name,
+            user_role=user_role,
             action=h.action,
             changes=h.changes,
             comment=h.comment,
@@ -382,31 +421,41 @@ def update_client_rate(
     new_rate = Decimal(str(data.get("client_rate_percent", deal.client_rate_percent)))
     old_rate = deal.client_rate_percent
     
-    # Добавляем в историю
-    add_deal_history(
-        db, deal_id, current_user.id,
-        DealHistoryAction.CLIENT_RATE_CHANGED.value,
-        changes={
-            "client_rate_percent": {"old": str(old_rate), "new": str(new_rate)}
-        }
-    )
-    
-    deal.client_rate_percent = new_rate
-    
-    # Пересчитываем total_usdt_calculated если есть данные
-    if deal.deal_amount and deal.transactions:
-        # Пересчёт логики на основе новой ставки
-        # Формула: client_should_send = deal_amount * avg_rate * (1 + client_rate/100)
-        avg_rate = Decimal("1")
-        rate_count = 0
-        for trans in deal.transactions:
-            if trans.exchange_rate:
-                avg_rate += Decimal(str(trans.exchange_rate))
-                rate_count += 1
-        if rate_count > 0:
-            avg_rate = avg_rate / rate_count
+    # Пропускаем запись в историю если значение не изменилось
+    if old_rate != new_rate:
+        # Получаем старые и новые значения дохода для истории
+        old_income = calculate_deal_income(deal, db)
         
-        deal.total_usdt_calculated = deal.deal_amount * avg_rate * (1 + new_rate / 100)
+        # Обновляем ставку
+        deal.client_rate_percent = new_rate
+        
+        # Пересчитываем доход с новой ставкой
+        new_income = calculate_deal_income(deal, db)
+        
+        # Форматируем историю на русском
+        history_comment = format_client_rate_history(
+            old_rate=old_rate,
+            new_rate=new_rate,
+            old_sends=Decimal(str(old_income["client_should_send"])),
+            new_sends=Decimal(str(new_income["client_should_send"])),
+            old_revenue=Decimal(str(old_income["income_amount"])),
+            new_revenue=Decimal(str(new_income["income_amount"])),
+            old_commission=Decimal(str(old_income["manager_commission_amount"])),
+            new_commission=Decimal(str(new_income["manager_commission_amount"])),
+            old_profit=Decimal(str(old_income["net_profit"])),
+            new_profit=Decimal(str(new_income["net_profit"])),
+            currency=old_income.get("currency", "USDT")
+        )
+        
+        # Добавляем в историю с форматированным комментарием
+        add_deal_history(
+            db,
+            deal_id,
+            current_user.id,
+            DealHistoryActionRU.CLIENT_RATE_CHANGED.value,
+            comment=history_comment,
+            user=current_user
+        )
     
     db.commit()
     db.refresh(deal)
@@ -484,6 +533,12 @@ def update_deal(
     """Полное обновление сделки с транзакциями (Бухгалтер)"""
     from decimal import Decimal
     from app.services.deal_calculator import DealCalculator
+    from app.core.deal_history_localization import (
+        FieldNameRU,
+        DealHistoryActionRU,
+        format_consolidated_deal_edit,
+        format_consolidated_deal_edit_text
+    )
     
     deal = db.query(Deal).filter(Deal.id == deal_id).first()
     if not deal:
@@ -492,6 +547,15 @@ def update_deal(
     # Проверяем, что сделка в статусе execution
     if deal.status != DealStatus.EXECUTION.value:
         raise HTTPException(status_code=400, detail="Deal can only be edited in execution status")
+    
+    # Сохраняем старые значения для отслеживания изменений
+    old_client_rate = deal.client_rate_percent
+    old_income = calculate_deal_income(deal, db)
+    
+    # Список для сбора всех изменений маршрутов (для консолидированной истории)
+    all_route_changes = []
+    new_routes_added = []
+    deleted_routes = []
     
     # Обновляем основные поля сделки
     if "client_id" in deal_update:
@@ -504,7 +568,13 @@ def update_deal(
     if "client_receives_currency" in deal_update:
         deal.client_receives_currency = deal_update["client_receives_currency"]
     
-    # Удаляем указанные транзакции
+    # Обновляем ставку клиента если передана
+    new_client_rate = deal.client_rate_percent
+    if "client_rate_percent" in deal_update:
+        new_client_rate = Decimal(str(deal_update["client_rate_percent"]))
+        deal.client_rate_percent = new_client_rate
+    
+    # Удаляем указанные транзакции (собираем инфо для истории)
     deleted_ids = deal_update.get("deleted_transaction_ids", [])
     if deleted_ids:
         for trans_id in deleted_ids:
@@ -513,7 +583,10 @@ def update_deal(
                 Transaction.deal_id == deal_id
             ).first()
             if trans and trans.status != TransactionStatus.PAID:
+                route_type = trans.route_type or "unknown"
+                deleted_routes.append(route_type)
                 db.delete(trans)
+        db.flush()
     
     # Обрабатываем транзакции
     transactions_data = deal_update.get("transactions", [])
@@ -529,14 +602,75 @@ def update_deal(
             db_id = route.get("db_id")
             
             if db_id:
-                # Обновляем существующую транзакцию
+                # Обновляем существующую транзакцию - собираем изменения
                 db_trans = db.query(Transaction).filter(
                     Transaction.id == db_id,
                     Transaction.deal_id == deal_id
                 ).first()
                 
                 if db_trans and db_trans.status != TransactionStatus.PAID:
-                    # Обновляем поля
+                    # Сохраняем старые значения для сравнения
+                    changes_dict = {}
+                    
+                    # Вспомогательная функция для отслеживания изменений
+                    def track_change(field_name, old_val, new_val):
+                        # Convert to comparable format
+                        old_str = str(old_val) if old_val is not None else None
+                        new_str = str(new_val) if new_val is not None else None
+                        
+                        # Handle decimal comparison
+                        try:
+                            if old_val is not None and new_val is not None:
+                                old_dec = Decimal(str(old_val))
+                                new_dec = Decimal(str(new_val))
+                                if old_dec == new_dec:
+                                    return
+                        except:
+                            pass
+                        
+                        if old_str != new_str and new_val is not None:
+                            changes_dict[field_name] = {
+                                "old": old_str if old_str is not None else "—",
+                                "new": new_str
+                            }
+                    
+                    # Отслеживаем изменения
+                    route_type = route.get("route_type") or db_trans.route_type
+                    
+                    # General fields
+                    track_change("exchange_rate", db_trans.exchange_rate, route.get("exchange_rate"))
+                    
+                    # Direct Transfer fields
+                    if route_type == "direct":
+                        track_change("amount_from_account", db_trans.amount_from_account, route.get("amount_from_account"))
+                        track_change("internal_company_id", db_trans.internal_company_id, route.get("internal_company_id"))
+                        track_change("internal_company_account_id", db_trans.internal_company_account_id, route.get("internal_company_account_id"))
+                        track_change("bank_commission_id", db_trans.bank_commission_id, route.get("bank_commission_id"))
+                    
+                    # Exchange fields
+                    if route_type == "exchange":
+                        track_change("amount_from_account", db_trans.amount_from_account, route.get("amount_from_account"))
+                        track_change("crypto_account_id", db_trans.crypto_account_id, route.get("crypto_account_id"))
+                        track_change("exchange_from_currency", db_trans.exchange_from_currency, route.get("exchange_from_currency"))
+                        track_change("exchange_amount", db_trans.exchange_amount, route.get("exchange_amount"))
+                        track_change("crypto_exchange_rate", db_trans.crypto_exchange_rate, route.get("crypto_exchange_rate"))
+                        track_change("agent_commission_id", db_trans.agent_commission_id, route.get("agent_commission_id"))
+                        track_change("exchange_commission_id", db_trans.exchange_commission_id, route.get("exchange_commission_id"))
+                        track_change("exchange_bank_commission_id", db_trans.exchange_bank_commission_id, route.get("exchange_bank_commission_id"))
+                    
+                    # Partner fields
+                    if route_type == "partner":
+                        track_change("amount_from_account", db_trans.amount_from_account, route.get("amount_from_account"))
+                        track_change("partner_company_id", db_trans.partner_company_id, route.get("partner_company_id"))
+                        track_change("partner_commission_id", db_trans.partner_commission_id, route.get("partner_commission_id"))
+                    
+                    # Partner 50-50 fields
+                    if route_type == "partner_50_50":
+                        track_change("amount_from_account", db_trans.amount_from_account, route.get("amount_from_account"))
+                        track_change("partner_50_50_company_id", db_trans.partner_50_50_company_id, route.get("partner_50_50_company_id"))
+                        track_change("partner_50_50_commission_id", db_trans.partner_50_50_commission_id, route.get("partner_50_50_commission_id"))
+                    
+                    # Применяем изменения
                     db_trans.route_type = route.get("route_type")
                     db_trans.exchange_rate = Decimal(str(route.get("exchange_rate", 0))) if route.get("exchange_rate") else None
                     db_trans.client_company_id = trans_data.get("client_company_id")
@@ -567,6 +701,13 @@ def update_deal(
                     # Calculated
                     db_trans.calculated_route_income = route_calc.get("calculated_route_income")
                     db_trans.final_income = route_calc.get("calculated_route_income")
+                    
+                    # Если есть изменения, добавляем их в общий список
+                    if changes_dict:
+                        all_route_changes.append({
+                            "route_type": route_type,
+                            "changes": changes_dict
+                        })
             else:
                 # Создаём новую транзакцию
                 db_trans = Transaction(
@@ -604,11 +745,94 @@ def update_deal(
                     status=TransactionStatus.PENDING
                 )
                 db.add(db_trans)
+                new_routes_added.append(route.get("route_type", "unknown"))
         
         total_client_should_send += trans_totals["final_income"]
     
     # Обновляем итоговую сумму
     deal.total_usdt_calculated = total_client_should_send
+    
+    # Flush to calculate new income
+    db.flush()
+    
+    # Получаем новые значения дохода после всех изменений
+    new_income = calculate_deal_income(deal, db)
+    
+    # Определяем, изменилась ли ставка клиента
+    client_rate_changed = old_client_rate != new_client_rate
+    
+    # Проверяем, есть ли вообще какие-либо изменения
+    has_any_changes = (
+        bool(all_route_changes) or 
+        bool(new_routes_added) or 
+        bool(deleted_routes) or 
+        client_rate_changed
+    )
+    
+    # Создаём ОДНУ консолидированную запись в историю, только если есть изменения
+    if has_any_changes:
+        # Формируем структурированные данные изменений
+        consolidated_data = format_consolidated_deal_edit(
+            route_changes=all_route_changes,
+            old_income=old_income,
+            new_income=new_income,
+            client_rate_changed=client_rate_changed,
+            old_client_rate=old_client_rate,
+            new_client_rate=new_client_rate,
+            currency=old_income.get("currency", "USDT")
+        )
+        
+        # Добавляем информацию о новых и удаленных маршрутах
+        if new_routes_added:
+            consolidated_data["new_routes"] = new_routes_added
+        if deleted_routes:
+            consolidated_data["deleted_routes"] = deleted_routes
+        
+        # Формируем текстовый комментарий (для совместимости и fallback)
+        comment_text = format_consolidated_deal_edit_text(
+            route_changes=all_route_changes,
+            old_income=old_income,
+            new_income=new_income,
+            client_rate_changed=client_rate_changed,
+            old_client_rate=old_client_rate,
+            new_client_rate=new_client_rate,
+            currency=old_income.get("currency", "USDT")
+        )
+        
+        # Добавляем инфо о новых/удаленных маршрутах в текст
+        extra_lines = []
+        if deleted_routes:
+            route_type_ru = {
+                "direct": "Прямой перевод",
+                "exchange": "Биржа",
+                "partner": "Партнёр",
+                "partner_50_50": "Партнёр 50-50",
+            }
+            for rt in deleted_routes:
+                extra_lines.append(f"Удалён маршрут: {route_type_ru.get(rt, rt)}")
+        if new_routes_added:
+            route_type_ru = {
+                "direct": "Прямой перевод",
+                "exchange": "Биржа",
+                "partner": "Партнёр",
+                "partner_50_50": "Партнёр 50-50",
+            }
+            for rt in new_routes_added:
+                extra_lines.append(f"Добавлен маршрут: {route_type_ru.get(rt, rt)}")
+        
+        if extra_lines:
+            if comment_text:
+                comment_text = "\n".join(extra_lines) + "\n\n" + comment_text
+            else:
+                comment_text = "\n".join(extra_lines)
+        
+        add_deal_history(
+            db, deal_id, current_user.id,
+            DealHistoryActionRU.DEAL_EDITED.value,
+            changes=consolidated_data,
+            comment=comment_text,
+            user=current_user
+        )
     
     db.commit()
     db.refresh(deal)

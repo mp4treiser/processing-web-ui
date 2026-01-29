@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import * as XLSX from 'xlsx';
 
 interface Deal {
   id: number;
@@ -147,6 +148,111 @@ export function AnalyticsDashboard() {
 
   const isLoading = dealsLoading || incomeLoading;
 
+  const exportToExcel = () => {
+    // Создаём workbook
+    const wb = XLSX.utils.book_new();
+
+    // Создаём таблицу в том же формате, что и на странице
+    const headers = [
+      'Клиент',
+      '% ставки клиента',
+      '%-маржа',
+      '% нашей прибыли',
+    ];
+
+    // Добавляем динамические колонки для сделок
+    const numDealColumns = Math.min(maxDeals, 10);
+    for (let i = 1; i <= numDealColumns; i++) {
+      headers.push(`Сделка ${i}`);
+    }
+    if (maxDeals > 10) {
+      headers.push('...');
+    }
+    headers.push('Итого по клиенту');
+
+    // Формируем данные для каждого клиента
+    const tableData: any[][] = [];
+    
+    clientStats.forEach((client) => {
+      const row: any[] = [
+        client.client_name,
+        client.total_client_rate.toFixed(2) + '%',
+        client.total_margin.toFixed(2) + '%',
+        ((client.total_profit / (client.total_amount || 1)) * 100).toFixed(2) + '%',
+      ];
+
+      // Добавляем данные по каждой сделке
+      for (let i = 0; i < numDealColumns; i++) {
+        const deal = client.deals[i];
+        if (deal) {
+          const profit = deal.income ? parseFloat(deal.income.net_profit).toFixed(2) : '—';
+          row.push(`#${deal.id}: ${profit}`);
+        } else {
+          row.push('—');
+        }
+      }
+
+      if (maxDeals > 10) {
+        row.push(`+${client.deals.length - 10}`);
+      }
+
+      // Итого по клиенту
+      row.push(client.total_profit.toFixed(2));
+
+      tableData.push(row);
+    });
+
+    // Добавляем итоговую строку
+    const totalRow: any[] = [
+      'ИТОГО',
+      grandTotal.total_client_rate.toFixed(2) + '%',
+      grandTotal.total_margin.toFixed(2) + '%',
+      ((grandTotal.total_profit / (grandTotal.total_amount || 1)) * 100).toFixed(2) + '%',
+    ];
+
+    // Пустые ячейки для сделок
+    for (let i = 0; i < numDealColumns; i++) {
+      totalRow.push('');
+    }
+    if (maxDeals > 10) {
+      totalRow.push('');
+    }
+
+    // Итоговая прибыль
+    totalRow.push(grandTotal.total_profit.toFixed(2) + ' USDT');
+
+    tableData.push(totalRow);
+
+    // Создаём лист с таблицей
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...tableData]);
+
+    // Настраиваем ширину колонок
+    const colWidths = [
+      { wch: 20 }, // Клиент
+      { wch: 18 }, // % ставки клиента
+      { wch: 12 }, // %-маржа
+      { wch: 18 }, // % нашей прибыли
+    ];
+    
+    for (let i = 0; i < numDealColumns; i++) {
+      colWidths.push({ wch: 15 }); // Сделки
+    }
+    if (maxDeals > 10) {
+      colWidths.push({ wch: 10 }); // ...
+    }
+    colWidths.push({ wch: 18 }); // Итого по клиенту
+
+    ws['!cols'] = colWidths;
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Аналитика');
+
+    // Генерируем имя файла с датой
+    const fileName = `analytics_${new Date().toISOString().split('T')[0]}.xlsx`;
+    
+    // Скачиваем файл
+    XLSX.writeFile(wb, fileName);
+  };
+
   return (
     <div className="px-4 py-6">
       <div className="mb-6">
@@ -199,6 +305,19 @@ export function AnalyticsDashboard() {
               </button>
             </div>
           </div>
+        </div>
+
+        {/* Кнопка экспорта */}
+        <div className="flex justify-end mb-6">
+          <button
+            onClick={exportToExcel}
+            disabled={isLoading || filteredDeals.length === 0}
+            className="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-2"
+            title="Экспорт в Excel"
+          >
+            <span>📊</span>
+            <span>Экспорт в Excel</span>
+          </button>
         </div>
 
         {/* Общая статистика */}

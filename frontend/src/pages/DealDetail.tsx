@@ -84,14 +84,44 @@ interface CompanyAccount {
   currency: string;
 }
 
+interface RouteChange {
+  route_type: string;
+  route_type_ru: string;
+  route_color: string;
+  fields: Array<{ name: string; old: string; new: string }>;
+}
+
+interface TotalField {
+  name: string;
+  old: string;
+  new: string;
+  currency: string;
+}
+
+interface ConsolidatedChanges {
+  type?: string;
+  routes?: RouteChange[];
+  totals?: {
+    has_changes: boolean;
+    fields: TotalField[];
+  };
+  client_rate?: {
+    old: string;
+    new: string;
+  };
+  new_routes?: string[];
+  deleted_routes?: string[];
+}
+
 interface DealHistory {
   id: number;
   deal_id: number;
   user_id: number;
   user_email: string | null;
   user_name: string | null;
+  user_role: string | null;
   action: string;
-  changes: Record<string, { old: string; new: string }> | null;
+  changes: ConsolidatedChanges | Record<string, { old: string; new: string }> | null;
   comment: string | null;
   created_at: string;
 }
@@ -162,14 +192,27 @@ const ROUTE_TYPE_LABELS: Record<string, string> = {
 };
 
 const ACTION_LABELS: Record<string, string> = {
-  'created': 'Создана',
-  'updated': 'Обновлена',
+  'Создано': 'Создано',
+  'Скопировано': 'Скопировано',
+  'Обновлено': 'Обновлено',
+  'Статус изменён': 'Статус изменён',
+  'Транзакция добавлена': 'Транзакция добавлена',
+  'Транзакция удалена': 'Транзакция удалена',
+  'Изменена ставка клиента': 'Изменена ставка клиента',
+  'Одобрено': 'Одобрено',
+  'Отклонено': 'Отклонено',
+  'Оплата подтверждена': 'Оплата подтверждена',
+  'Маршрут изменён': 'Маршрут изменён',
+  'Маршрут удалён': 'Маршрут удалён',
+  'Сделка отредактирована': 'Сделка отредактирована',
+  'created': 'Создано',
+  'updated': 'Обновлено',
   'status_changed': 'Статус изменён',
   'transaction_added': 'Транзакция добавлена',
   'transaction_removed': 'Транзакция удалена',
-  'client_rate_changed': 'Ставка клиента изменена',
-  'approved': 'Одобрена',
-  'rejected': 'Отклонена',
+  'client_rate_changed': 'Изменена ставка клиента',
+  'approved': 'Одобрено',
+  'rejected': 'Отклонено',
   'payment_confirmed': 'Оплата подтверждена',
 };
 
@@ -438,15 +481,6 @@ export function DealDetail() {
           </div>
           <p className="text-gray-600 text-sm mt-1">
             Клиент: <span className="font-medium">{client?.name || `ID ${deal.client_id}`}</span>
-            {' | '}
-            Создана: {new Date(deal.created_at).toLocaleString('ru-RU')}
-          </p>
-          {/* Кто создал сделку */}
-          <p className="text-gray-500 text-xs mt-1">
-            Создал: <span className="font-medium">{deal.created_by_name || deal.created_by_email || `ID ${deal.created_by_id || deal.manager_id}`}</span>
-            {deal.manager_id !== deal.created_by_id && (
-              <> | Менеджер: <span className="font-medium">{deal.manager_name || deal.manager_email || `ID ${deal.manager_id}`}</span></>
-            )}
           </p>
         </div>
         <div className="flex gap-2">
@@ -628,39 +662,196 @@ export function DealDetail() {
             </button>
           </div>
           {showHistory && (
-            <div className="space-y-3 max-h-64 overflow-y-auto">
-              {deal.history.map((h) => (
-                <div key={h.id} className="border-l-2 border-indigo-200 pl-3 py-1">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <span className="text-sm font-medium text-gray-800">
-                        {ACTION_LABELS[h.action] || h.action}
-                      </span>
-                      <span className="text-xs text-gray-500 ml-2">
-                        {h.user_name || h.user_email || `User #${h.user_id}`}
+            <div className="space-y-4 max-h-96 overflow-y-auto">
+              {deal.history.map((h) => {
+                // Format role capitalization: manager -> Manager, senior_manager -> Senior Manager
+                const roleDisplay = h.user_role
+                  ? h.user_role
+                      .split('_')
+                      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                      .join(' ')
+                  : 'Unknown';
+                
+                const userDisplay = h.user_name ? `${h.user_name} – ${roleDisplay}` : `User #${h.user_id}`;
+                
+                // Check if this is a consolidated edit with structured data
+                const isConsolidatedEdit = h.changes && 'type' in h.changes && h.changes.type === 'consolidated_edit';
+                const consolidatedChanges = isConsolidatedEdit ? (h.changes as ConsolidatedChanges) : null;
+                
+                // Route color mapping
+                const getRouteColorClasses = (color: string) => {
+                  const colorMap: Record<string, string> = {
+                    blue: 'text-blue-700',
+                    green: 'text-green-700',
+                    purple: 'text-purple-700',
+                    yellow: 'text-yellow-700',
+                    gray: 'text-gray-700'
+                  };
+                  return colorMap[color] || 'text-gray-700';
+                };
+                
+                const routeTypeRu: Record<string, string> = {
+                  direct: 'Прямой перевод',
+                  exchange: 'Биржа',
+                  partner: 'Партнёр',
+                  partner_50_50: 'Партнёр 50-50'
+                };
+                
+                return (
+                  <div key={h.id} className="border-l-2 border-indigo-200 pl-3 py-2">
+                    {/* Header: Action + User + Time */}
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <span className="text-sm font-medium text-gray-800">
+                          {ACTION_LABELS[h.action] || h.action}:
+                        </span>
+                        <span className="text-xs text-gray-600 ml-2">
+                          {userDisplay}
+                        </span>
+                      </div>
+                      <span className="text-xs text-gray-400">
+                        {new Date(h.created_at).toLocaleString('ru-RU')}
                       </span>
                     </div>
-                    <span className="text-xs text-gray-400">
-                      {new Date(h.created_at).toLocaleString('ru-RU')}
-                    </span>
+                    
+                    {/* Consolidated Edit Display */}
+                    {consolidatedChanges && (
+                      <div className="space-y-3 text-xs">
+                        {/* Client Rate Change */}
+                        {consolidatedChanges.client_rate && (
+                          <div>
+                            <span className="text-gray-700">Ставка клиента: </span>
+                            <span className="text-red-600">{consolidatedChanges.client_rate.old}%</span>
+                            <span className="text-gray-500"> → </span>
+                            <span className="text-green-600">{consolidatedChanges.client_rate.new}%</span>
+                          </div>
+                        )}
+                        
+                        {/* Deleted Routes */}
+                        {consolidatedChanges.deleted_routes && consolidatedChanges.deleted_routes.length > 0 && (
+                          <div className="text-gray-700">
+                            {consolidatedChanges.deleted_routes.map((rt, idx) => (
+                              <div key={idx}>
+                                <span className="text-red-600">✕ Удалён маршрут: </span>
+                                <span className="font-semibold">{routeTypeRu[rt] || rt}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        
+                        {/* New Routes */}
+                        {consolidatedChanges.new_routes && consolidatedChanges.new_routes.length > 0 && (
+                          <div className="text-gray-700">
+                            {consolidatedChanges.new_routes.map((rt, idx) => (
+                              <div key={idx}>
+                                <span className="text-green-600">✓ Добавлен маршрут: </span>
+                                <span className="font-semibold">{routeTypeRu[rt] || rt}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        
+                        {/* Route Changes */}
+                        {consolidatedChanges.routes && consolidatedChanges.routes.length > 0 && (
+                          <div className="space-y-2">
+                            {consolidatedChanges.routes.map((route, routeIdx) => (
+                              <div key={routeIdx}>
+                                <div className={`font-bold ${getRouteColorClasses(route.route_color)}`}>
+                                  Маршрут: {route.route_type_ru}
+                                </div>
+                                <div className="pl-3 space-y-0.5">
+                                  {route.fields.map((field, fieldIdx) => (
+                                    <div key={fieldIdx}>
+                                      <span className="text-gray-700">{field.name}: </span>
+                                      <span className="text-red-600">{field.old}</span>
+                                      <span className="text-gray-500"> → </span>
+                                      <span className="text-green-600">{field.new}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        
+                        {/* Totals Recalculated */}
+                        {consolidatedChanges.totals?.has_changes && (
+                          <div className="mt-2 pt-2 border-t border-gray-200">
+                            <div className="font-medium text-gray-700 mb-1">Итого пересчитано:</div>
+                            <div className="pl-2 space-y-0.5">
+                              {consolidatedChanges.totals.fields.map((field, idx) => (
+                                <div key={idx}>
+                                  <span className="text-gray-600">• {field.name}: </span>
+                                  <span className="text-red-600">{field.old}</span>
+                                  <span className="text-gray-500"> → </span>
+                                  <span className="text-green-600">{field.new}</span>
+                                  <span className="text-gray-500 ml-1">{field.currency}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* Fallback: Plain text comment (for old history entries or non-consolidated) */}
+                    {!consolidatedChanges && h.comment && (
+                      <div className="text-xs text-gray-600 mt-1 whitespace-pre-wrap">
+                        {h.comment.split('\n').map((line, idx) => {
+                          // Check if line contains arrow for old → new format
+                          if (line.includes(' → ')) {
+                            const colonIdx = line.indexOf(':');
+                            if (colonIdx > 0) {
+                              const fieldName = line.substring(0, colonIdx);
+                              const rest = line.substring(colonIdx + 1).trim();
+                              const [oldVal, newVal] = rest.split(' → ');
+                              return (
+                                <div key={idx}>
+                                  <span className="text-gray-700">{fieldName}: </span>
+                                  <span className="text-red-600">{oldVal}</span>
+                                  <span className="text-gray-500"> → </span>
+                                  <span className="text-green-600">{newVal}</span>
+                                </div>
+                              );
+                            }
+                            const parts = line.split(' → ');
+                            return (
+                              <div key={idx}>
+                                <span className="text-red-600">{parts[0]}</span>
+                                <span className="text-gray-500"> → </span>
+                                <span className="text-green-600">{parts[1]}</span>
+                              </div>
+                            );
+                          }
+                          // Check if it's a route header
+                          if (line.startsWith('Маршрут:')) {
+                            return <div key={idx} className="font-semibold text-gray-800 mt-1">{line}</div>;
+                          }
+                          // Check if it's a totals header
+                          if (line === 'Итого пересчитано:') {
+                            return <div key={idx} className="font-medium text-gray-700 mt-2 border-t border-gray-200 pt-1">{line}</div>;
+                          }
+                          return <div key={idx}>{line}</div>;
+                        })}
+                      </div>
+                    )}
+                    
+                    {/* Legacy changes display (for old-style history entries without structured data) */}
+                    {!consolidatedChanges && h.changes && !('type' in h.changes) && Object.keys(h.changes).length > 0 && (
+                      <div className="mt-1 text-xs">
+                        {Object.entries(h.changes as Record<string, { old: string; new: string }>).map(([field, values]) => (
+                          <div key={field}>
+                            <span className="text-gray-700">{field}: </span>
+                            <span className="text-red-600">{values.old || '—'}</span>
+                            <span className="text-gray-500"> → </span>
+                            <span className="text-green-600">{values.new || '—'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  {h.changes && Object.keys(h.changes).length > 0 && (
-                    <div className="mt-1 text-xs text-gray-600">
-                      {Object.entries(h.changes).map(([field, values]) => (
-                        <div key={field}>
-                          <span className="font-medium">{field}:</span>{' '}
-                          <span className="text-red-500">{values.old || '—'}</span>
-                          {' → '}
-                          <span className="text-green-500">{values.new || '—'}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {h.comment && (
-                    <p className="text-xs text-gray-500 mt-1 italic">{h.comment}</p>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
