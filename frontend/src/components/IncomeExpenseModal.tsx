@@ -142,13 +142,16 @@ export function IncomeExpenseModal({
     });
   };
 
-  const handleAccountChange = (selectedId: number) => {
-    const account = allAccounts.find(acc => acc.id === selectedId);
+  const handleAccountChange = (compositeValue: string) => {
+    // Parse composite value: "type:id"
+    const [type, idStr] = compositeValue.split(':');
+    const id = parseInt(idStr);
+    const account = allAccounts.find(acc => acc.id === id && acc.type === type);
     if (account) {
       setFormData({
         ...formData,
         selectedAccountId: account.id,
-        selectedAccountType: account.type,
+        selectedAccountType: account.type as 'company' | 'crypto',
         currencyFrom: account.currency,
       });
     }
@@ -213,13 +216,13 @@ export function IncomeExpenseModal({
               </label>
               <select
                 required
-                value={formData.selectedAccountId}
-                onChange={(e) => handleAccountChange(parseInt(e.target.value))}
+                value={`${formData.selectedAccountType}:${formData.selectedAccountId}`}
+                onChange={(e) => handleAccountChange(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value={0}>Select an account...</option>
+                <option value="company:0">Select an account...</option>
                 {allAccounts.map((account) => (
-                  <option key={`${account.type}-${account.id}`} value={account.id}>
+                  <option key={`${account.type}-${account.id}`} value={`${account.type}:${account.id}`}>
                     {account.account_name} ({account.currency})
                   </option>
                 ))}
