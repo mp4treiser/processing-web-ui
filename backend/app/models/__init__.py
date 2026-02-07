@@ -16,6 +16,8 @@ from app.models.deal_template import DealTemplate
 from app.models.deal_history import DealHistory, DealHistoryAction
 from app.models.manager_commission import ManagerCommission
 from app.models.system_settings import SystemSetting
+from app.models.exchange_rate_transaction import ExchangeRateTransaction, TransactionType
+from app.models.exchange_rate_average import ExchangeRateAverage
 
 __all__ = [
     "User",
@@ -44,5 +46,8 @@ __all__ = [
     "DealHistoryAction",
     "ManagerCommission",
     "SystemSetting",
+    "ExchangeRateTransaction",
+    "TransactionType",
+    "ExchangeRateAverage",
 ]
 

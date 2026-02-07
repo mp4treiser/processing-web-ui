@@ -1,5 +1,8 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { IncomeExpenseModal } from './IncomeExpenseModal';
+import { ExchangeRatesTable } from './ExchangeRatesTable';
 
 interface CompanyBalance {
   company_id: number;
@@ -46,6 +49,15 @@ interface CompanyBalancesDisplayProps {
 }
 
 export function CompanyBalancesDisplay({ showProjected = false, selectedAccounts = [] }: CompanyBalancesDisplayProps) {
+  const [modalState, setModalState] = useState<{
+    isOpen: boolean;
+    transactionType: 'income' | 'expense';
+    accountId: number;
+    accountType: 'company' | 'crypto';
+    accountName: string;
+    accountCurrency: string;
+  } | null>(null);
+
   const { data: balancesData, isLoading } = useQuery<ProjectedBalances>({
     queryKey: ['company-balances', showProjected ? 'projected' : 'summary'],
     queryFn: async () => {
@@ -164,12 +176,34 @@ export function CompanyBalancesDisplay({ showProjected = false, selectedAccounts
     return numValue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 4 });
   };
 
+  const openModal = (
+    transactionType: 'income' | 'expense',
+    accountId: number,
+    accountType: 'company' | 'crypto',
+    accountName: string,
+    accountCurrency: string
+  ) => {
+    setModalState({
+      isOpen: true,
+      transactionType,
+      accountId,
+      accountType,
+      accountName,
+      accountCurrency,
+    });
+  };
+
+  const closeModal = () => {
+    setModalState(null);
+  };
+
   return (
+    <>
     <div className="bg-white shadow rounded-lg p-2 mb-2">
       <h2 className="text-xs font-semibold mb-1">Company Balances</h2>
       
-      <div className="grid grid-cols-2 gap-2">
-        {/* Левая колонка: Company Accounts */}
+      <div className="grid grid-cols-3 gap-2">
+        {/* Первая колонка: Company Accounts */}
         <div>
           <h3 className="text-xs font-medium mb-1 text-gray-700">Company Accounts</h3>
           <div className="space-y-1">
@@ -186,7 +220,7 @@ export function CompanyBalancesDisplay({ showProjected = false, selectedAccounts
                     
                     return (
                       <div key={company.company_id} className={`border rounded p-1.5 ${hasChanges ? 'border-orange-300 bg-orange-50' : 'border-gray-200'}`}>
-                        <div className="flex justify-between items-center">
+                        <div className="flex justify-between items-center mb-1">
                           <span className="text-xs font-medium">{company.company_name}</span>
                           <div className="flex items-center space-x-1">
                             <span className="text-xs text-gray-600">
@@ -200,7 +234,7 @@ export function CompanyBalancesDisplay({ showProjected = false, selectedAccounts
                           </div>
                         </div>
                         {company.accounts.length > 0 && (
-                          <div className="pl-1 mt-0.5">
+                          <div className="pl-1 mt-0.5 space-y-0.5">
                             {company.accounts.map((account) => {
                               const projectedAccount = showProjected && projectedCompany
                                 ? projectedCompany.accounts.find(a => a.id === account.id)
@@ -228,7 +262,7 @@ export function CompanyBalancesDisplay({ showProjected = false, selectedAccounts
           </div>
         </div>
 
-        {/* Правая колонка: Crypto Balances */}
+        {/* Вторая колонка: Crypto Balances */}
         {current.crypto_balances.length > 0 && (
           <div>
             <h3 className="text-xs font-medium mb-1 text-gray-700">Crypto Balances</h3>
@@ -260,7 +294,26 @@ export function CompanyBalancesDisplay({ showProjected = false, selectedAccounts
             </div>
           </div>
         )}
+
+        {/* Третья колонка: Exchange Rates */}
+        <div>
+          <ExchangeRatesTable openModal={openModal} />
+        </div>
       </div>
     </div>
+
+    {/* Income/Expense Modal */}
+    {modalState && (
+      <IncomeExpenseModal
+        isOpen={modalState.isOpen}
+        onClose={closeModal}
+        transactionType={modalState.transactionType}
+        accountId={modalState.accountId}
+        accountType={modalState.accountType}
+        accountName={modalState.accountName}
+        accountCurrency={modalState.accountCurrency}
+      />
+    )}
+    </>
   );
 }

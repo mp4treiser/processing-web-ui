@@ -23,7 +23,7 @@ class InternalCompanyAccountHistory(Base):
     change_amount = Column(Numeric(30, 10), nullable=False)  # положительное или отрицательное
     
     # Тип изменения
-    change_type = Column(SQLEnum(CompanyBalanceChangeType), nullable=False)
+    change_type = Column(SQLEnum(CompanyBalanceChangeType, values_callable=lambda x: [e.value for e in x]), nullable=False)
     
     # Связь с транзакцией/сделкой (если изменение связано с ними)
     transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)

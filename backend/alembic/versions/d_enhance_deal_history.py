@@ -30,3 +30,6 @@ def downgrade() -> None:
     op.drop_column('deal_history', 'user_name')
     op.drop_column('deal_history', 'user_email')
 
+
+
+

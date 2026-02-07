@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api import auth, deals, transactions, director, clients, accountant, statistics, senior_manager, references, account_balances, company_balances, templates
+from app.api import auth, deals, transactions, director, clients, accountant, statistics, senior_manager, references, account_balances, company_balances, templates, exchange_rates
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/api")
@@ -14,4 +14,5 @@ api_router.include_router(references.router, prefix="/api")
 api_router.include_router(account_balances.router, prefix="/api")
 api_router.include_router(company_balances.router, prefix="/api")
 api_router.include_router(templates.router, prefix="/api")
+api_router.include_router(exchange_rates.router, prefix="/api")
 
